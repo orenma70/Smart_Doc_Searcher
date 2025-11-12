@@ -1,0 +1,1 @@
+ pyinstaller --onefile --noconsole --path C:\Users\orenm\Dropbox\my_doc\Python\venvs\py313\Lib\site-packages main.py
