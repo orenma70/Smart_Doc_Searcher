@@ -19,8 +19,8 @@ if isLTR:
     setText_str = "default message here"
     clear_btn_str = "Clear Button"
 
-    nonchatgpt_radio_str = " Keyword Matching"  # Semantic Search "
-    chatgpt_radio_str = " Ask Chat "
+    nongemini_radio_str = " Keyword Matching"  # Semantic Search "
+    gemini_radio_str = " Ask Chat "
 
     exact_search_radio_str = " Match full word "
     partial_search_radio_str = " Match partially "
@@ -42,8 +42,8 @@ else:
     setText_str = "מתי הסתיימה עסקת הליסינג של הרכב?"
     clear_btn_str = "! לחצן הניקוי !"
 
-    nonchatgpt_radio_str = "  חיפוש מילים  "
-    chatgpt_radio_str = " שאל את הצ'אט "
+    nongemini_radio_str = "  חיפוש מילים  "
+    gemini_radio_str = " שאל את הצ'אט "
 
     exact_search_radio_str = " התאמה מלאה "
     partial_search_radio_str = " התאמה חלקית"
@@ -183,14 +183,14 @@ def setup_ui(self):
 
 
     layout.addLayout(search_layout)
-    self.nonchatgpt_radio = QtWidgets.QRadioButton(nonchatgpt_radio_str)
+    self.nongemini_radio = QtWidgets.QRadioButton(nongemini_radio_str)
     if not chat_mode:
-        self.nonchatgpt_radio.setChecked(True)
+        self.nongemini_radio.setChecked(True)
 
 
     if  not chat_mode:
         self.search_input.setPlaceholderText(label_str)
-        self.nonchatgpt_radio.setStyleSheet("""
+        self.nongemini_radio.setStyleSheet("""
             QRadioButton {
                 background-color: #0000ff; /* Light gray background for the frame */
                 color: #333333; /* Optional: set text color */
@@ -210,15 +210,15 @@ def setup_ui(self):
         self.search_input.setPlaceholderText(label_gpt_str)
 
 
-    self.nonchatgpt_radio.setFont(font2)
+    self.nongemini_radio.setFont(font2)
 
 
 
-    # Radio buttons for search mode (search words / ChatGPT)
-    self.chatgpt_radio = QtWidgets.QRadioButton(chatgpt_radio_str)
+    # Radio buttons for search mode (search words / gemini)
+    self.gemini_radio = QtWidgets.QRadioButton(gemini_radio_str)
     if  chat_mode:
-        self.chatgpt_radio.setChecked(True)
-        self.chatgpt_radio.setStyleSheet("""
+        self.gemini_radio.setChecked(True)
+        self.gemini_radio.setStyleSheet("""
                 QRadioButton {
                     background-color: #0000ff; /* Light gray background for the frame */
                     color: #333333; /* Optional: set text color */
@@ -235,7 +235,7 @@ def setup_ui(self):
                 }
             """)
 
-        self.nonchatgpt_radio.setStyleSheet("""
+        self.nongemini_radio.setStyleSheet("""
                 QRadioButton {
                     background-color: #f0f0f0; /* Light gray background for the frame */
                     color: #333333; /* Optional: set text color */
@@ -253,10 +253,10 @@ def setup_ui(self):
                 """)
 
 
-    self.chatgpt_radio.setFont(font2)
+    self.gemini_radio.setFont(font2)
 
     # In your setup_ui, after creating the radio button:
-    self.chatgpt_radio.toggled.connect(self.update_search_button_text)
+    self.gemini_radio.toggled.connect(self.update_search_button_text)
 
 
 
@@ -327,8 +327,8 @@ def setup_ui(self):
     self.mode_group3 = QtWidgets.QButtonGroup()
 
     # Add buttons to respective groups
-    self.mode_group1.addButton(self.chatgpt_radio)
-    self.mode_group1.addButton(self.nonchatgpt_radio)
+    self.mode_group1.addButton(self.gemini_radio)
+    self.mode_group1.addButton(self.nongemini_radio)
 
     self.mode_group2.addButton(self.partial_search_radio)
     self.mode_group2.addButton(self.exact_search_radio)
@@ -337,7 +337,7 @@ def setup_ui(self):
     self.mode_group3.addButton(self.any_word_search_radio)
 
     # Layout for the two groups of radio buttons
-    # First group (ChatGPT / Search Words)
+    # First group (gemini / Search Words)
     #g1_layout = QtWidgets.QHBoxLayout()
 
     g2_container = QtWidgets.QWidget()
@@ -350,9 +350,9 @@ def setup_ui(self):
     else:
         g3_layout = QtWidgets.QHBoxLayout(g3_container)
 
-    g3_layout.addWidget(self.nonchatgpt_radio)
+    g3_layout.addWidget(self.nongemini_radio)
     #g3_layout.addSpacing(30)
-    g3_layout.addWidget(self.chatgpt_radio)
+    g3_layout.addWidget(self.gemini_radio)
     g3_layout.addStretch()
 
     g3_container.setStyleSheet("""

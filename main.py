@@ -1,7 +1,7 @@
 import sys
 import os
-from PyQt5 import QtWidgets, QtCore
-from PyQt5.QtWidgets import QApplication
+import requests
+from PyQt5 import QtWidgets, QtCore, QtGui
 from pdf2image import convert_from_path
 from PIL import Image # Used to handle the image object
 from docx import Document
@@ -18,12 +18,10 @@ import subprocess
 import ctypes  # <-- NEW: Import ctypes for low-level Windows API call
 from urllib.parse import urlparse, unquote
 import mimetypes
-import openai
 from dotenv import load_dotenv
 import time
 import shutil
-#import wmi
-#import hashlib
+
 from google import genai
 from google.genai.errors import APIError
 from google.genai import types
@@ -36,23 +34,12 @@ import tempfile
 
 chat_gpt = False
 
-chat_mode = ''
-if chat_gpt:
-    api_key = os.environ.get("OPENAI_API_KEY") # $Env:OPENAI_API_KEY = "sk-proj-vf-..."  echo $Env:OPENAI_API_KEY in power shell
-    MODEL_NAME = 'gpt-4'
-    openai.api_key = api_key
-    chat_mode = 'chatgpt'
-else:
-    api_key = os.environ.get("GEMINI_API_KEY")  # $Env:OPENAI_API_KEY = "sk-proj-vf-..."  echo $Env:OPENAI_API_KEY in power shell
-    MODEL_NAME = 'gemini-2.5-flash'
-    chat_mode = 'gemini'
+api_key = os.environ.get("GEMINI_API_KEY")  # $Env:OPENAI_API_KEY = "sk-proj-vf-..."  echo $Env:OPENAI_API_KEY in power shell
+MODEL_NAME = 'gemini-2.5-flash'
+chat_mode = 'gemini'
 
 
 
-
-#load_dotenv()  # loads variables from .env file
-#openai.api_key = os.environ.get("OPENAI_API_KEY")
-# Define RLO constant near the top of the file
 RLO = u"\u202e"
 CONFIG_FILE = "config.txt"
 HEADER_MARGIN = 50
@@ -70,8 +57,35 @@ LATIN_LETTER_PATTERN = re.compile(r'[a-zA-Z]')
 sequence_pattern = re.compile(r'\d+')
 LATIN_LETTER_PATTERNnNum = re.compile(r'[a-zA-Z]+|\d+')
 
-import fitz  # PyMuPDF
 
+
+# ... your existing PyQt5 imports
+
+# Set the URL for your deployed API
+API_URL = "https://your-deployed-service-url.a.run.app/search"
+
+
+def on_search_button_clicked(self):
+    query = self.search_input.text()  # Get text from PyQt5 widget
+    try:
+        # Send the query to the cloud API
+        response = requests.post(
+            API_URL,
+            json={"query": query},
+            timeout=10
+        )
+        response.raise_for_status()  # Raise exception for bad status codes (4xx or 5xx)
+
+        # Get the JSON results back from the API
+        search_results = response.json()
+
+        # Update your PyQt5 list/table with the results
+        self.display_results(search_results)
+
+    except requests.exceptions.RequestException as e:
+        # Handle connection errors or bad responses
+        print(f"Error communicating with API: {e}")
+        QtWidgets.QMessageBox.critical(self, "Error", "Could not connect to search service.")
 
 def convert_pdf_page_to_pixmap(page, page_number: int):
     """
@@ -979,32 +993,12 @@ class SearchApp(QtWidgets.QWidget):
         return answer
 
 
-    # --- END ShellExecuteW Definition ---
-    def ask_chatgpt(self, prompt):
-        try:
-            print("Sending prompt to GPT...")
-            response = openai.ChatCompletion.create(
-                model= MODEL_NAME,  # or 'gpt-3.5-turbo'
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
-                max_tokens=500
-            )
-            print("Response received from API.")
-            answer = response.choices[0].message['content']
 
-            print("ChatGPT ", answer)
-            if "error" in answer.lower():
-                answer = ""
-
-            return answer
-        except Exception as e:
-            print("Error during API call:", e)
-            return f"Error: {e}"
 
     def update_search_button_text(self):
         layout = self.both_groups_layout  # Use the class attribute reference
-        if self.chatgpt_radio.isChecked():
-            self.search_btn.setText(ui_setup.chatgpt_radio_str)
+        if self.gemini_radio.isChecked():
+            self.search_btn.setText(ui_setup.gemini_radio_str)
             self.label.setText(ui_setup.label_gpt_str)
             #self.g1_container.setVisible(False)
             #self.setPlaceholderText(ui_setup.search_input_question_str)
@@ -1013,7 +1007,7 @@ class SearchApp(QtWidgets.QWidget):
             #layout.removeWidget(self.g_group_widget)
             #layout.insertItem(self.g1_layout_index, self.g1_placeholder)
 
-            self.nonchatgpt_radio.setStyleSheet("""
+            self.nongemini_radio.setStyleSheet("""
                 QRadioButton {
                     background-color: #f0f0f0; /* Light gray background for the frame */
                     color: #333333; /* Optional: set text color */
@@ -1029,7 +1023,7 @@ class SearchApp(QtWidgets.QWidget):
                     background-color: green;
                 }
                 """)
-            self.chatgpt_radio.setStyleSheet("""
+            self.gemini_radio.setStyleSheet("""
                            QRadioButton {
                                background-color: #0000ff; /* Light gray background for the frame */
                                color: #333333; /* Optional: set text color */
@@ -1063,7 +1057,7 @@ class SearchApp(QtWidgets.QWidget):
             #layout.insertWidget(self.g1_layout_index, self.g1_container)
             #layout.insertWidget(self.g1_layout_index, self.g_group_widget)
 
-            self.nonchatgpt_radio.setStyleSheet("""
+            self.nongemini_radio.setStyleSheet("""
                 QRadioButton {
                     background-color: #0000ff; /* Light gray background for the frame */
                     color: #333333; /* Optional: set text color */
@@ -1079,7 +1073,7 @@ class SearchApp(QtWidgets.QWidget):
                     background-color: green;
                 }
                 """)
-            self.chatgpt_radio.setStyleSheet("""
+            self.gemini_radio.setStyleSheet("""
                 QRadioButton {
                     background-color: #f0f0f0; /* Light gray background for the frame */
                     color: #333333; /* Optional: set text color */
@@ -1192,7 +1186,7 @@ class SearchApp(QtWidgets.QWidget):
 
 
             # Determine mode
-        if self.chatgpt_radio.isChecked():
+        if self.gemini_radio.isChecked():
             search_mode = chat_mode
         elif self.exact_search_radio.isChecked():
             search_mode = 'full'
@@ -1229,15 +1223,7 @@ class SearchApp(QtWidgets.QWidget):
                 filename_lower = filename.lower()
                 if filename_lower.endswith('.docx'):
                     try:
-                        if search_mode == 'chatgpt':
-                            temppath = os.path.join("C:\\a\\temp", filename)
-                            shutil.copy2(path, "C:\\a\\temp")
-
-                            answer = self.handle_chatgpt_mode("C:\\a\\temp", query)
-                            if answer.strip():
-                                self.results_area.append(f"<div dir='rtl'><b>   ChatGPT </b><br>{answer}")
-                            os.remove(temppath)
-                        elif search_mode == 'gemini':
+                        if search_mode == 'gemini':
 
                             #doc_text = extract_text_from_docx(path)
                             #if doc_text:
@@ -1279,16 +1265,6 @@ class SearchApp(QtWidgets.QWidget):
 
                             display_gemini_result(self, self.results_area, answer, path)
 
-                        elif search_mode == 'chatgpt' and chatgptallfile:
-
-                            temppath = os.path.join("C:\\a\\temp", filename)
-                            shutil.copy2(path, "C:\\a\\temp")
-
-                            answer = self.handle_chatgpt_mode("C:\\a\\temp", query)
-                            if answer.strip():
-                                self.results_area.append(f"<div dir='rtl'><b>   ChatGPT </b><br>{answer}")
-                            os.remove(temppath)
-
 
                         else:
                             matches = pdf_search(self, path, words, mode, search_mode)
@@ -1302,7 +1278,7 @@ class SearchApp(QtWidgets.QWidget):
                     except:
                         continue
 
-        if  not self.chatgpt_radio.isChecked():
+        if  not self.gemini_radio.isChecked():
             if total_found == 0:
                 self.results_area.append("לא נמצאו תוצאות.")
             else:

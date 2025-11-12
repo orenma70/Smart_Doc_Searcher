@@ -17,14 +17,14 @@ WORKDIR $APP_HOME
 # 4. התקנת חבילות Python
 COPY requirements.txt .
 # התקנת requirements.txt (יטפל בהתקנת PyMuPDF)
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt [cite: 2]
 
 # 5. העתקת הקוד
 COPY . .
 
 # 6. הגדרת הפורט
-EXPOSE 8080
+EXPOSE 8080 [cite: 3]
 
 # 7. פקודת ההרצה
-# **החלף את main:app לפקודת ההרצה המתאימה ליישום שלך**
-CMD ["gunicorn", "-b", "0.0.0.0:8080", "main:app"]
+# **CORRECTION: Pointing to api_server.py instead of main.py**
+CMD ["gunicorn", "-b", "0.0.0.0:8080", "api_server:app"]
