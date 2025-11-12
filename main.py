@@ -1,5 +1,6 @@
 import sys
 import os
+import json
 import requests
 from PyQt5 import QtWidgets, QtCore, QtGui
 from pdf2image import convert_from_path
@@ -57,35 +58,126 @@ LATIN_LETTER_PATTERN = re.compile(r'[a-zA-Z]')
 sequence_pattern = re.compile(r'\d+')
 LATIN_LETTER_PATTERNnNum = re.compile(r'[a-zA-Z]+|\d+')
 
+Gemini_on_cloud = False
 
 
-# ... your existing PyQt5 imports
 
-# Set the URL for your deployed API
-API_URL = "https://your-deployed-service-url.a.run.app/search"
+# החלף את ה-URL בכתובת המלאה שלך
+API_URL="https://smart-doc-searcher-api-359127107055.us-central1.run.app/search"
+
+#
+import requests
+from PyQt5 import QtWidgets
 
 
-def on_search_button_clicked(self):
-    query = self.search_input.text()  # Get text from PyQt5 widget
+# פונקציה זו מחליפה את הפונקציה הקיימת שלך,
+# ומניחה ש'self' הוא אובייקט ה-GUI המכיל את self.results_text_area.
+
+def on_search_button_clicked(self, query, directory_path):
+    # הפונקציה המדויקת ששלחת, בתוספת לוגיקת עיבוד התוצאה.
+
+    try:
+        # 1. שליחת הבקשה ל-Cloud Run API
+        url = "https://smart-doc-searcher-api-359127107055.us-central1.run.app/search"
+        payload = {
+            "query": query,
+            "directory_path": directory_path
+        }
+
+        response = requests.post(
+            url,
+            json=payload,
+            headers={'Content-Type': 'application/json'}
+        )
+        response.raise_for_status()  # לזרוק שגיאה אם הסטטוס הוא 4xx/5xx
+
+        # 2. עיבוד התוצאה
+        results_data = response.json()
+
+        # 3. בודק אם הסטטוס הוא RAG (מ-Gemini) או Fallback (חיפוש פשוט)
+        status = results_data.get('status', 'Unknown')
+
+        formatted_output = ""
+
+        if status.endswith('(RAG)'):
+            # --- פורמט RAG (תשובה אנליטית מ-Gemini) ---
+            response_text = results_data.get('response', 'הבינה המלאכותית לא סיפקה תשובה ברורה.')
+
+            formatted_output = (
+                f"✅ **תשובה אנליטית (Gemini AI)**\n"
+                f"----------------------------------------\n"
+                f"{response_text}\n\n"
+            )
+
+            # אם יש מקורות, ניתן להוסיף אותם כאן (כרגע הקוד לא מוציא אותם)
+
+        elif status.endswith('(Fallback)'):
+            # --- פורמט Fallback (חיפוש מילות מפתח) ---
+
+            # עדיף להציג הודעת שגיאה ברורה למה ה-RAG נכשל
+            formatted_output = (
+                f"⚠️ **כשל ב-RAG: המערכת נפלה לחיפוש מילות מפתח.**\n"
+                f"----------------------------------------------------\n"
+                f"הודעת מערכת: {results_data.get('message', 'לא נמצאו מסמכים.')}\n\n"
+            )
+
+            # הוספת הסניפטים מה-Fallback
+            if results_data.get('results'):
+                for result in results_data['results']:
+                    formatted_output += (
+                        f"📄 **{result['filename']}** (קטע רלוונטי):\n"
+                        f"   {result['snippet']}\n"
+                        f"----------------------------------------\n"
+                    )
+
+        else:
+            # טיפול בשגיאות מה-API עצמו
+            formatted_output = f"🛑 **שגיאת API או סטטוס לא ידוע:**\n{results_data.get('message', 'לא התקבלה הודעת שגיאה.')}"
+
+        # עדכון תיבת הטקסט ב-GUI
+        # (יש לוודא שאובייקט זה קיים במחלקת ה-GUI שלך)
+        #self.results_text_area.setText(formatted_output)
+        return formatted_output
+
+    except requests.exceptions.RequestException as e:
+        # טיפול בשגיאות חיבור לרשת או שגיאות HTTP
+        error_message = f"שגיאת תקשורת עם שירות החיפוש (API):\n{e}"
+        print(error_message)
+
+        # הצגת הודעה קריטית למשתמש
+        QtWidgets.QMessageBox.critical(self, "שגיאה", error_message)
+
+def on_search_button_clicked2(self, query, directory_path):
+
     try:
         # Send the query to the cloud API
+        # 2. בניית הבקשה
+        url = "https://smart-doc-searcher-api-359127107055.us-central1.run.app/search"
+        payload = {
+            "query": query,
+            "directory_path": directory_path
+        }
+
+
+        # 3. שליחת הבקשה
         response = requests.post(
-            API_URL,
-            json={"query": query},
-            timeout=10
+            url,
+            json=payload,
+            headers={'Content-Type': 'application/json'}
         )
-        response.raise_for_status()  # Raise exception for bad status codes (4xx or 5xx)
+        response.raise_for_status()  # לזרוק שגיאה אם הסטטוס הוא 4xx/5xx
 
-        # Get the JSON results back from the API
-        search_results = response.json()
+        # 4. עיבוד התוצאה
+        results_data = response.json()
 
-        # Update your PyQt5 list/table with the results
-        self.display_results(search_results)
+        return results_data
 
     except requests.exceptions.RequestException as e:
         # Handle connection errors or bad responses
         print(f"Error communicating with API: {e}")
         QtWidgets.QMessageBox.critical(self, "Error", "Could not connect to search service.")
+
+
 
 def convert_pdf_page_to_pixmap(page, page_number: int):
     """
@@ -1170,6 +1262,14 @@ class SearchApp(QtWidgets.QWidget):
         folder = self.dir_edit.text().strip()
         query = self.search_input.text().strip()
         self.results_area.clear()
+
+        if Gemini_on_cloud:
+            folder = "גירושין/2024"
+            #folder = "/2024/גירושין/"
+            answer = on_search_button_clicked(self, query, folder)
+            #perform_search(query, directory_path=folder)
+            display_gemini_result(self, self.results_area, answer, folder)
+            return
 
         if not os.path.isdir(folder):
             QtWidgets.QMessageBox.warning(self, "שגיאה", "התיקיה לא קיימת.")
