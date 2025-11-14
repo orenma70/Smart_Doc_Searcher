@@ -1,0 +1,87 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: new-smart-search-v2
+  namespace: '359127107055'
+  selfLink: /apis/serving.knative.dev/v1/namespaces/359127107055/services/new-smart-search-v2
+  uid: ae89f47c-79d9-4436-8d52-c59a78465974
+  resourceVersion: AAZDfQaCm6A
+  generation: 6
+  creationTimestamp: '2025-11-13T14:01:49.939559Z'
+  labels:
+    cloud.googleapis.com/location: us-central1
+  annotations:
+    serving.knative.dev/creator: orenma@gmail.com
+    serving.knative.dev/lastModifier: orenma@gmail.com
+    run.googleapis.com/binary-authorization: default
+    run.googleapis.com/build-enable-automatic-updates: 'false'
+    run.googleapis.com/build-id: a564494f-2753-410a-95eb-8f7d329bf02f
+    run.googleapis.com/build-image-uri: us-central1-docker.pkg.dev/smarthebsearch/cloud-run-source-deploy/new-smart-search-v2
+    run.googleapis.com/build-name: projects/359127107055/locations/us-central1/builds/a564494f-2753-410a-95eb-8f7d329bf02f
+    run.googleapis.com/build-source-location: gs://run-sources-smarthebsearch-us-central1/services/new-smart-search-v2/1763054054.847069-0b5b4aa089374cffb48fa5a4d012cbcc.zip#1763054055102769
+    run.googleapis.com/client-name: gcloud
+    run.googleapis.com/client-version: 547.0.0
+    run.googleapis.com/operation-id: 6226e409-fbb5-4dd5-821c-1606639d384c
+    run.googleapis.com/ingress: all
+    run.googleapis.com/ingress-status: all
+    run.googleapis.com/urls: '["https://new-smart-search-v2-359127107055.us-central1.run.app","https://new-smart-search-v2-rjqzbhrqaq-uc.a.run.app"]'
+spec:
+  template:
+    metadata:
+      labels:
+        client.knative.dev/nonce: pwvytffndz
+        run.googleapis.com/startupProbeType: Default
+      annotations:
+        autoscaling.knative.dev/maxScale: '20'
+        run.googleapis.com/client-name: gcloud
+        run.googleapis.com/client-version: 547.0.0
+        run.googleapis.com/startup-cpu-boost: 'true'
+    spec:
+      containerConcurrency: 80
+      timeoutSeconds: 360
+      serviceAccountName: 359127107055-compute@developer.gserviceaccount.com
+      containers:
+      - name: new-smart-search-v2-1
+        image: us-central1-docker.pkg.dev/smarthebsearch/cloud-run-source-deploy/new-smart-search-v2@sha256:3be8725569511a7149541461d4df7d794b8f211d84bfc0fc0252cfafcdbcf77c
+        ports:
+        - name: http1
+          containerPort: 8080
+        env:
+        - name: BUCKET_NAME
+          value: new-smart-doc-storage-oren
+        - name: GEMINI_API_KEY
+          value: AIzaSyDjIgFhkq8HVzeEK6yErg03BKLNRwWdwMk
+        resources:
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+        startupProbe:
+          timeoutSeconds: 240
+          periodSeconds: 240
+          failureThreshold: 1
+          tcpSocket:
+            port: 8080
+  traffic:
+  - percent: 100
+    latestRevision: true
+status:
+  observedGeneration: 6
+  conditions:
+  - type: Ready
+    status: 'True'
+    lastTransitionTime: '2025-11-13T17:15:19.459744Z'
+  - type: ConfigurationsReady
+    status: 'True'
+    lastTransitionTime: '2025-11-13T17:15:11.796560Z'
+  - type: RoutesReady
+    status: 'True'
+    lastTransitionTime: '2025-11-13T17:15:19.424795Z'
+  latestReadyRevisionName: new-smart-search-v2-00003-dj8
+  latestCreatedRevisionName: new-smart-search-v2-00003-dj8
+  traffic:
+  - revisionName: new-smart-search-v2-00003-dj8
+    percent: 100
+    latestRevision: true
+  url: https://new-smart-search-v2-rjqzbhrqaq-uc.a.run.app
+  address:
+    url: https://new-smart-search-v2-rjqzbhrqaq-uc.a.run.app

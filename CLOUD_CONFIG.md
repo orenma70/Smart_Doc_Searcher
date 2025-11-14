@@ -20,7 +20,7 @@ The application relies on environment variables for secure access.
 
 | Variable Name | Value Type / Source | Location in Console |
 | :--- | :--- | :--- |
-| **`GEMINI_API_KEY`** | AIzaSyDjIgFhkq8HVzeEK6yErg03BKLNRwWdwMk | **This must be set in the Cloud Run Environment Variables or Secret Manager.** |
+| **`GEMINI_API_KEY`** | ***** | **This must be set in the Cloud Run Environment Variables or Secret Manager.** |
 | **`BUCKET_NAME`** | `oren-smart-search-docs-1205` | The GCS bucket containing the source PDF documents. |
 
 ## 3. Identity and Access Management (IAM)

@@ -27,7 +27,7 @@ from google import genai
 from google.genai.errors import APIError
 from google.genai import types
 
-from PyQt5 import QtWidgets
+
 import fitz  # PyMuPDF
 import tempfile
 
@@ -39,7 +39,7 @@ api_key = os.environ.get("GEMINI_API_KEY")  # $Env:OPENAI_API_KEY = "sk-proj-vf-
 MODEL_NAME = 'gemini-2.5-flash'
 chat_mode = 'gemini'
 
-
+CLIENT_PREFIX_TO_STRIP = "C:/a/מצרפי"
 
 RLO = u"\u202e"
 CONFIG_FILE = "config.txt"
@@ -62,8 +62,7 @@ LATIN_LETTER_PATTERNnNum = re.compile(r'[a-zA-Z]+|\d+')
 API_URL="https://smart-doc-searcher-api-359127107055.us-central1.run.app/search"
 
 #
-import requests
-from PyQt5 import QtWidgets
+
 
 
 # פונקציה זו מחליפה את הפונקציה הקיימת שלך,
@@ -1261,9 +1260,25 @@ class SearchApp(QtWidgets.QWidget):
         self.results_area.clear()
 
         if self.cloudgemini_radio.isChecked():
-            folder = "גירושין/2024"
-            #folder = "גירושין"
-            #folder = "/2024/גירושין/"
+            normalized_path = folder.replace("\\", "/")
+            prefix_to_strip = CLIENT_PREFIX_TO_STRIP.replace("\\", "/")
+            # 3. Strip trailing slashes from both for consistent comparison (e.g., C:/a/מצרפי/)
+            normalized_path = normalized_path.strip('/')
+            prefix_to_strip = prefix_to_strip.strip('/')
+
+            # 4. Perform the strip only if the path starts with the prefix
+            if normalized_path.lower().startswith(prefix_to_strip.lower()):
+                # Strip the prefix, plus the slash that separates the prefix from the folder path
+                gcs_directory_path = normalized_path[len(prefix_to_strip):].strip('/')
+            else:
+                # If no prefix match, use the normalized path as is
+                gcs_directory_path = normalized_path.strip('/')
+
+            # ... gcs_directory_path (now 'גירושין/2024') is used for GCS listing
+
+            folder = gcs_directory_path
+
+
             answer = on_search_button_clicked(self, query, folder)
             #perform_search(query, directory_path=folder)
             display_gemini_result(self, self.results_area, answer, folder)

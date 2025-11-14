@@ -7,6 +7,7 @@ from flask import Flask, request, jsonify
 from google.cloud import storage
 from google import genai
 from pypdf import PdfReader
+import docx
 
 # --- Configuration ---
 BUCKET_NAME = "oren-smart-search-docs-1205"
@@ -58,6 +59,18 @@ def extract_content(blob_bytes, blob_name):
             print(f"Error reading PDF {blob_name} with pypdf: {e}")
             return "ERROR: Could not read PDF content."
 
+
+    elif blob_name.lower().endswith('.docx'):
+        text = ""
+        try:
+            document = docx.Document(io.BytesIO(blob_bytes))
+            for paragraph in document.paragraphs:
+                text += paragraph.text + "\n"
+            return text.strip()
+        except Exception as e:
+            print(f"Error reading DOCX {blob_name}: {e}")
+            return "ERROR: Could not read DOCX content."
+
     # Handle other files as plain text
     try:
         return blob_bytes.decode('utf-8', errors='ignore')
@@ -85,7 +98,7 @@ def get_gcs_files_context(directory_path, bucket_name):
     # or use ThreadPoolExecutor if document count is very high.
     for blob in blobs:
         # Filter: Skip the folder itself and empty files
-        if blob.name == prefix or blob.size == 0 or not blob.name.lower().endswith(('.pdf', '.txt')):
+        if blob.name == prefix or blob.size == 0 or not blob.name.lower().endswith(('.docx', '.pdf', '.txt')):
             continue
 
         try:
@@ -127,10 +140,16 @@ def perform_search(query: str, directory_path: str = ""):
         # Use the filename as a clear boundary for the model
         document_context += f"File: {doc['name']}\nContent:\n{doc['content']}\n---\n"
 
+    #system_instruction2 = (
+    #    "אתה אנליסט מסמכים מקצועי. התשובה שלך צריכה להיות עברית רהוטה וברורה. "
+    #    "השתמש אך ורק במידע שסופק בתוך 'DOCUMENTS CONTEXT' כדי לענות על שאלת המשתמש. "
+    #    "אם המידע אינו קיים ב-CONTEXT, ענה: 'המידע לגבי [שאלה ספציפית] אינו נמצא במסמכים שסופקו'."
+    #)
+
     system_instruction = (
-        "אתה אנליסט מסמכים מקצועי. התשובה שלך צריכה להיות עברית רהוטה וברורה. "
-        "השתמש אך ורק במידע שסופק בתוך 'DOCUMENTS CONTEXT' כדי לענות על שאלת המשתמש. "
-        "אם המידע אינו קיים ב-CONTEXT, ענה: 'המידע לגבי [שאלה ספציפית] אינו נמצא במסמכים שסופקו'."
+        "YYou are a helpful assistant. Use ONLY the provided document text as document_context "
+        "to answer the question. If the information is not in the text, reply #$$$# "
+        # "the answer cannot be found in the provided document."
     )
 
     user_prompt = (
@@ -138,12 +157,16 @@ def perform_search(query: str, directory_path: str = ""):
         f"\n\n---"
         f"\n\nשאלה אנליטית: {query}"
     )
+    final_prompt = (
+        f"DOCUMENT CONTEXT:\n---\n{document_context}\n---\n\n"
+        f"QUESTION: {query}"
+    )
 
     try:
         # 3. Call Gemini API (using the global client)
         response = gemini_client.models.generate_content(
             model='gemini-2.5-flash',
-            contents=user_prompt,
+            contents=final_prompt,
             config={"system_instruction": system_instruction}
         )
 
