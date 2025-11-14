@@ -39,7 +39,7 @@ else:
     label_gpt_str = " הכנסת השאלה --->"
     #search_input_words_str = "Enter here search words"
     search_input_question_str = "הכנסת השאלה"
-    setText_str = "מה גיל הילדים?"
+    setText_str = "מי חברת הליסינג?"
     clear_btn_str = "! לחצן הניקוי !"
 
     nongemini_radio_str = "  חיפוש מילים  "
@@ -166,7 +166,7 @@ def setup_ui(self):
     self.save_btn.clicked.connect(self.save_all2file)
 
     self.cloudgemini_radio = QtWidgets.QRadioButton("Cloud Gemini")
-
+    self.cloudgemini_radio.setChecked(True)
     if isLTR:
         search_layout.addWidget(self.search_btn)
         search_layout.addWidget(self.label)
