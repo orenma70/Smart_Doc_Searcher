@@ -1,20 +1,5 @@
-# === חבילות ליבת הפרויקט וה-AI ===
-google-genai
-python-dotenv
-Pillow            # עבור 'from PIL import Image'
-python-docx       # עבור 'from docx import Document'
-pdfplumber
-pypdf             # עבור 'import pypdf'
-PyPDF2            # עבור 'from PyPDF2 import...'
-pypdf           # עבור 'import fitz'
-google-cloud-storage
-
-# === חבילות נדרשות לעיבוד קבצים ===
-pdf2image
-	
-# === חביבות נדרשות לשרת HTTP ב-Cloud Run (Back-End) ===
-Flask             # דוגמה לחבילת ווב (אם אתה משתמש ב-Flask)
-gunicorn          # שרת HTTP/WSGI מומלץ להרצת Flask בפרודקשן
-
-# === חביבות נדרשות ל-PyQt5 Client (לביצוע קריאות API) ===
-requests          # נדרש ל-main.py כדי לשלוח בקשות HTTP לשרת ה-Cloud Run
+Flask==3.0.3
+gunicorn==22.0.0
+google-genai==0.1.0
+google-cloud-storage==2.16.0
+pypdf

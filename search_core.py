@@ -2,137 +2,149 @@ import os
 import re
 import json
 import io
+import traceback
 from flask import Flask, request, jsonify
 from google.cloud import storage
 from google import genai
-from google.generativeai.errors import APIError
-from pypdf import PdfReader  # ייבוא חדש לטובת חילוץ טקסט
-from concurrent.futures import ThreadPoolExecutor
+from pypdf import PdfReader
 
 # --- Configuration ---
-# The bucket name where your PDF documents are stored
 BUCKET_NAME = "oren-smart-search-docs-1205"
-
-# The Gemini API key is expected to be set as an environment variable in Cloud Run
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+MAX_CHARS_PER_DOC = 10000
 
-# --- Initializations ---
+# --- Initializations (Eager, Global Initialization Fix) ---
 app = Flask(__name__)
-storage_client = storage.Client()
+storage_client = None
 gemini_client = None
 
-if GEMINI_API_KEY:
-    try:
-        # Initialize the Gemini Client using the API Key
-        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-    except Exception as e:
-        print(f"Error initializing Gemini client: {e}")
-else:
-    print("Warning: GEMINI_API_KEY environment variable not set.")
+try:
+    if not GEMINI_API_KEY:
+        raise ValueError("GEMINI_API_KEY environment variable not set.")
+
+    # Initialize clients ONCE at application startup
+    storage_client = storage.Client()
+    gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+    print("✅ Gemini and Storage clients initialized successfully on startup.")
+
+except Exception as e:
+    # If this fails, the server will not start, preventing the 503 loop.
+    print(f"FATAL ERROR during client initialization: {e}")
+    traceback.print_exc()
+    raise
 
 
 # --- Utility Functions ---
 
-def process_pdf_content(file_bytes):
-    """
-    Reads raw PDF file bytes (in memory) using pypdf,
-    a more robust parser for complex text structures than fitz for certain PDFs.
-    """
-    text = ""
+def extract_content(blob_bytes, blob_name):
+    """Extracts text content from bytes, handling only PDF for now."""
+
+    if blob_name.lower().endswith('.pdf'):
+        text = ""
+        try:
+            # 1. Use BytesIO to process the file in memory
+            file_stream = io.BytesIO(blob_bytes)
+            reader = PdfReader(file_stream)
+
+            # 2. Extract text from all pages
+            for page in reader.pages:
+                text += page.extract_text() or ""
+
+            # Basic cleanup
+            text = re.sub(r'\s+', ' ', text).strip()
+            return text
+
+        except Exception as e:
+            print(f"Error reading PDF {blob_name} with pypdf: {e}")
+            return "ERROR: Could not read PDF content."
+
+    # Handle other files as plain text
     try:
-        # 1. יצירת אובייקט BytesIO כדי לדמות קובץ בזיכרון
-        file_stream = io.BytesIO(file_bytes)
-
-        # 2. פתיחת ה-PDF באמצעות pypdf
-        reader = PdfReader(file_stream)
-
-        # 3. חילוץ טקסט מכל עמוד
-        for page in reader.pages:
-            # שימוש בשיטת extract_text של pypdf
-            extracted_text = page.extract_text()
-            if extracted_text:
-                text += extracted_text + "\n"
-
-        # ניקוי בסיסי: הסרת רווחים כפולים וקפיצות שורה מיותרות
-        text = re.sub(r'\s+', ' ', text).strip()
-
+        return blob_bytes.decode('utf-8', errors='ignore')
     except Exception as e:
-        # Print the error for debugging, but continue
-        print(f"Error processing PDF content with pypdf: {e}")
-        return ""  # Return empty string on failure
-
-    return text
+        print(f"Error decoding text file {blob_name}: {e}")
+        return "ERROR: Could not decode text content."
 
 
-def download_and_process_file(blob):
+def get_gcs_files_context(directory_path, bucket_name):
     """
-    Downloads a single file's content and processes it.
-    Returns: a tuple of (filename, text_content).
+    Fetches, downloads, processes, and limits content from GCS.
+
+    This function consolidates the processing to avoid running the same logic twice.
+    It uses the global storage_client.
     """
-    try:
-        file_bytes = blob.download_as_bytes()
-        text_content = process_pdf_content(file_bytes)
-        return text_content
-    except Exception as e:
-        print(f"Error processing file {blob.name}: {e}")
-        return ""
+    print(f"🔍 Fetching files from gs://{bucket_name}/{directory_path}/")
+
+    bucket = storage_client.bucket(bucket_name)
+    prefix = f"{directory_path}/"
+    blobs = bucket.list_blobs(prefix=prefix)
+
+    file_data = []
+
+    # Process files sequentially for simplicity and reduced resource contention,
+    # or use ThreadPoolExecutor if document count is very high.
+    for blob in blobs:
+        # Filter: Skip the folder itself and empty files
+        if blob.name == prefix or blob.size == 0 or not blob.name.lower().endswith(('.pdf', '.txt')):
+            continue
+
+        try:
+            file_content_bytes = blob.download_as_bytes()
+            content_string = extract_content(file_content_bytes, blob.name)
+
+            # Truncate text to prevent Gemini token limit errors
+            if len(content_string) > MAX_CHARS_PER_DOC:
+                print(f"⚠️ Truncating file {blob.name} to {MAX_CHARS_PER_DOC} chars.")
+                content_string = content_string[:MAX_CHARS_PER_DOC]
+
+            if content_string and not content_string.startswith("ERROR:"):
+                file_data.append({
+                    "name": blob.name.replace(prefix, ""),  # Keep just the filename
+                    "content": content_string
+                })
+        except Exception as e:
+            print(f"Error downloading/processing {blob.name}: {e}")
+            continue
+
+    print(f"✅ Found {len(file_data)} usable documents in directory '{directory_path}'.")
+    return file_data
 
 
 def perform_search(query: str, directory_path: str = ""):
     """
-    Performs an aggressive RAG search: reads all PDF content in the directory,
-    combines it, and sends the unified context to Gemini for analysis.
+    Performs the RAG search using the globally initialized clients.
     """
-    if not gemini_client:
-        return {"status": "Error", "details": "Gemini client not initialized (API Key issue)."}
 
-    bucket = storage_client.bucket(BUCKET_NAME)
+    # 1. Retrieve and process documents (consolidated logic)
+    documents = get_gcs_files_context(directory_path, BUCKET_NAME)
 
-    # List all relevant files in the specified directory_path
-    blobs = list(bucket.list_blobs(prefix=directory_path + "/"))
-    pdf_blobs = [b for b in blobs if b.name.lower().endswith('.pdf')]
+    if not documents:
+        return {"status": "Fallback", "details": f"No usable documents found in '{directory_path}'."}
 
-    if not pdf_blobs:
-        return {"status": "Error", "details": f"No PDF files found in GCS folder: {directory_path}"}
+    # 2. Prepare Prompt for Gemini
+    document_context = "\n\n--- DOCUMENTS CONTEXT ---\n\n"
+    for doc in documents:
+        # Use the filename as a clear boundary for the model
+        document_context += f"File: {doc['name']}\nContent:\n{doc['content']}\n---\n"
 
-    # --- AGGRESSIVE RAG: Read ALL documents concurrently ---
-
-    # Use ThreadPoolExecutor to speed up downloading and processing all PDFs
-    all_context_text = ""
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        # Map the download_and_process_file function to all PDF blobs
-        future_results = executor.map(download_and_process_file, pdf_blobs)
-
-        # Combine all extracted text into one large context string
-        for text_content in future_results:
-            if text_content:
-                all_context_text += text_content + "\n\n---\n\n"
-
-    if not all_context_text.strip():
-        return {"status": "Error", "details": "Could not extract readable text from any PDF in the directory."}
-
-    # --- Gemini Analysis ---
-
-    # System Instruction: Guiding the model's persona and output
     system_instruction = (
         "אתה אנליסט מסמכים מקצועי. התשובה שלך צריכה להיות עברית רהוטה וברורה. "
-        "השתמש אך ורק במידע שסופק בתוך 'CONTEXT' כדי לענות על שאלת המשתמש. "
+        "השתמש אך ורק במידע שסופק בתוך 'DOCUMENTS CONTEXT' כדי לענות על שאלת המשתמש. "
         "אם המידע אינו קיים ב-CONTEXT, ענה: 'המידע לגבי [שאלה ספציפית] אינו נמצא במסמכים שסופקו'."
     )
 
-    # User Prompt: The combined context and the query
     user_prompt = (
-        f"CONTEXT:\n\n{all_context_text}"
+        f"{document_context}\n\n"
         f"\n\n---"
         f"\n\nשאלה אנליטית: {query}"
     )
 
     try:
-        # Call Gemini API
+        # 3. Call Gemini API (using the global client)
         response = gemini_client.models.generate_content(
             model='gemini-2.5-flash',
             contents=user_prompt,
-            system_instruction=system_instruction
+            config={"system_instruction": system_instruction}
         )
 
         # Success: Return the full analytical response
@@ -140,17 +152,17 @@ def perform_search(query: str, directory_path: str = ""):
             "query": query,
             "status": "Success (RAG)",
             "response": response.text,
-            "sources": []  # No specific sources tracking in Aggressive RAG
+            "sources": [doc['name'] for doc in documents]  # Optionally return the source filenames
         }
 
-    except APIError as e:
-        # Handle API errors (e.g., key expired, invalid request)
-        print(f"Gemini API Error: {e}")
-        return {"status": "API Error", "details": f"Check your GEMINI_API_KEY and API access. Details: {e}"}
     except Exception as e:
-        # Handle other runtime errors
-        print(f"An unexpected error occurred: {e}")
-        return {"status": "Runtime Error", "details": f"An unexpected error occurred during search: {e}"}
+        # Handle API errors (e.g., key expired, invalid request, token overflow)
+        print(f"Gemini API Error or runtime error: {e}")
+        traceback.print_exc()
+        return {
+            "status": "API Error",
+            "details": f"Check your request size or API configuration. Details: {e}"
+        }
 
 
 # --- Flask Routes ---
@@ -161,19 +173,20 @@ def search():
     try:
         data = request.get_json()
         query = data.get("query", "")
-        folder = data.get("folder", "")
+        directory_path = data.get("directory_path", "")
 
-        if not query or not folder:
-            return jsonify({"status": "Error", "details": "Missing 'query' or 'folder' in request."}), 400
+        if not query or not directory_path:
+            return jsonify({"status": "Error", "details": "Missing 'query' or 'directory_path' in request."}), 400
 
-        result = perform_search(query, folder)
-        return jsonify(result)
+        result = perform_search(query, directory_path)
+
+        # Return 500 for internal errors, 200 for successful RAG or expected fallback
+        if result.get("status", "").endswith("Error"):
+            return jsonify(result), 500
+
+        return jsonify(result), 200
 
     except Exception as e:
         print(f"Request handling error: {e}")
+        traceback.print_exc()
         return jsonify({"status": "Error", "details": f"Internal server error: {e}"}), 500
-
-
-if __name__ == "__main__":
-    # This block is for local testing only
-    app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))

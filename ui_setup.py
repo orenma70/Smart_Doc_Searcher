@@ -39,7 +39,7 @@ else:
     label_gpt_str = " הכנסת השאלה --->"
     #search_input_words_str = "Enter here search words"
     search_input_question_str = "הכנסת השאלה"
-    setText_str = "מתי הסתיימה עסקת הליסינג של הרכב?"
+    setText_str = "מה גיל הילדים?"
     clear_btn_str = "! לחצן הניקוי !"
 
     nongemini_radio_str = "  חיפוש מילים  "
@@ -165,16 +165,19 @@ def setup_ui(self):
     self.save_btn.setFont(font)
     self.save_btn.clicked.connect(self.save_all2file)
 
+    self.cloudgemini_radio = QtWidgets.QRadioButton("Cloud Gemini")
+
     if isLTR:
         search_layout.addWidget(self.search_btn)
         search_layout.addWidget(self.label)
         search_layout.addWidget(self.search_input)
         search_layout.addWidget(self.save_btn)
         search_layout.addWidget(self.clear_btn)
-
+        search_layout.addWidget(self.cloudgemini_radio)
 
 
     else:
+        search_layout.addWidget(self.cloudgemini_radio)
         search_layout.addWidget(self.save_btn)
         search_layout.addWidget(self.clear_btn)
         search_layout.addWidget(self.search_input)
@@ -449,7 +452,8 @@ def setup_ui(self):
     g_group_layout = QtWidgets.QHBoxLayout(self.e_group_widget)
     g_group_layout.addWidget(g3_container)
 
-
+    if chat_mode:
+        self.g_group_widget.setVisible(False)
     #layout.addLayout(g2_layout)
     # Create a parent horizontal layout to contain both groups side by side
 

@@ -1,32 +1,45 @@
 from flask import Flask, request, jsonify
-# The imported function MUST accept two arguments now: perform_search(query, directory_path)
 from search_core import perform_search
+import traceback  # נשאר לטיפול ב-500
 
 app = Flask(__name__)
 
 
 @app.route('/search', methods=['POST'])
 def search_endpoint():
-    # Get all JSON data from the request body
-    data = request.get_json()
+    # 1. קליטת JSON חסינת כשל (silent=True)
+    data = request.get_json(silent=True)
 
-    # 1. Get the search query (STRING)
-    query = data.get('query', '')
+    if data is None:
+        print("LOG: Request failed - Invalid JSON or missing Content-Type header.")
+        return jsonify({"error": "Invalid JSON or missing 'Content-Type: application/json' header."}), 400
 
-    # 2. קריטי: קליטת נתיב התיקייה (פרפיקס GCS).
-    # אם הלקוח לא שולח את זה, ברירת המחדל היא מחרוזת ריקה, שתחפש בכל הדלי.
-    directory_path = data.get('directory_path', '')
+    # 2. קליטת הפרמטרים
+    query = data.get('query', '').strip()
+    directory_path = data.get('directory_path', '').strip()
 
+    # 🛑 3. בדיקה אם שאילתה חסרה (400) - כולל Log!
     if not query:
-        return jsonify({"error": "No query provided"}), 400
+        # הדפסת הנתונים הנכנסים המלאים כדי לראות מה לא עבר
+        print(f"LOG: Request failed - Query missing. Received data: {data}")
+        return jsonify({"error": "No search query ('query') provided."}), 400
 
-    # 3. העברת שני הפרמטרים ללוגיקת החיפוש
-    results = perform_search(query, directory_path)
+    # 4. ביצוע החיפוש והחזרת התוצאות
+    try:
+        results = perform_search(query, directory_path)
 
-    # Return the results as JSON
-    return jsonify(results)
+        # הדפסה במקרה של הצלחה
+        print(f"LOG: Successful search for query: '{query}' in path: '{directory_path}'")
+
+        return jsonify(results), 200
+
+    except Exception as e:
+        # לכידת כל שגיאה פנימית
+        print(f"--- ERROR IN perform_search ---")
+        print(traceback.format_exc())
+        print(f"-------------------------------")
+        return jsonify({"error": "Internal server error during search process. Check server logs for details."}), 500
 
 
 if __name__ == '__main__':
-    # Used for local testing only
     app.run(host='0.0.0.0', port=8080)

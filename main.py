@@ -6,7 +6,7 @@ from PyQt5 import QtWidgets, QtCore, QtGui
 from pdf2image import convert_from_path
 from PIL import Image # Used to handle the image object
 from docx import Document
-from PyPDF2 import PdfReader
+#   from PyPDF2 import PdfReader
 import pypdf
 import re
 import docx2txt
@@ -58,10 +58,6 @@ LATIN_LETTER_PATTERN = re.compile(r'[a-zA-Z]')
 sequence_pattern = re.compile(r'\d+')
 LATIN_LETTER_PATTERNnNum = re.compile(r'[a-zA-Z]+|\d+')
 
-Gemini_on_cloud = False
-
-
-
 # החלף את ה-URL בכתובת המלאה שלך
 API_URL="https://smart-doc-searcher-api-359127107055.us-central1.run.app/search"
 
@@ -79,6 +75,7 @@ def on_search_button_clicked(self, query, directory_path):
     try:
         # 1. שליחת הבקשה ל-Cloud Run API
         url = "https://smart-doc-searcher-api-359127107055.us-central1.run.app/search"
+
         payload = {
             "query": query,
             "directory_path": directory_path
@@ -347,7 +344,7 @@ def extract_text_from_docx(docx_path: str) -> str:
         for paragraph in document.paragraphs:
             text.append(paragraph.text)
 
-        print(f"✅ Successfully extracted {len(" ".join(text).split())} words from the DOCX.")
+        print(f"✅ Successfully extracted {len(' '.join(text).split())} words from the DOCX.")
 
         # Join all paragraph text into a single string
         return "\n".join(text)
@@ -1263,8 +1260,9 @@ class SearchApp(QtWidgets.QWidget):
         query = self.search_input.text().strip()
         self.results_area.clear()
 
-        if Gemini_on_cloud:
+        if self.cloudgemini_radio.isChecked():
             folder = "גירושין/2024"
+            #folder = "גירושין"
             #folder = "/2024/גירושין/"
             answer = on_search_button_clicked(self, query, folder)
             #perform_search(query, directory_path=folder)
