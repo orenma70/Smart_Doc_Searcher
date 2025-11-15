@@ -4,66 +4,96 @@ import json
 import io
 import traceback
 from flask import Flask, request, jsonify
-from google.cloud import storage
+from google.cloud import storage, vision
 from google import genai
-from pypdf import PdfReader
-import docx
+from google.genai import errors
+# Document Processing Libraries
+from pdfminer.high_level import extract_text_to_fp  # For the 99% of searchable PDFs
+from docx import Document  # For DOCX files (using the class)
+
+# Removed unused imports: pypdf, docx (as module)
 
 # --- Configuration ---
-BUCKET_NAME = "oren-smart-search-docs-1205"
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+# NOTE: BUCKET_NAME and GEMINI_API_KEY should be set as ENV variables in Cloud Run
+BUCKET_NAME = os.environ.get("BUCKET_NAME", "default-bucket-name")  # Fallback for local testing
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")  # Fetched from ENV by the get_gemini_client function
 MAX_CHARS_PER_DOC = 10000
 
+
 # --- Initializations (Eager, Global Initialization Fix) ---
+
+def get_storage_client():
+    """Initializes and returns the Google Cloud Storage client, returns None on failure."""
+    try:
+        return storage.Client()
+    except Exception as e:
+        print(f"FATAL: Could not initialize Google Cloud Storage client. Check IAM/Permissions. Error: {e}")
+        return None
+
+
+def get_vision_client():
+    """Initializes and returns the Google Cloud Vision client, returns None on failure."""
+    try:
+        # Note: Requires the 'google-cloud-vision' library and IAM permission 'Cloud Vision API Service Agent'
+        return vision.ImageAnnotatorClient()
+    except Exception as e:
+        print(f"FATAL: Could not initialize Google Cloud Vision client. Check IAM/Permissions. Error: {e}")
+        return None
+
+
+def get_gemini_client():
+    """Initializes and returns the Gemini client, returns None on failure."""
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        print("FATAL: GEMINI_API_KEY environment variable not set.")
+        return None
+    try:
+        # Initialize using the API key provided in the environment variable
+        return genai.Client(api_key=api_key)
+    except Exception as e:
+        print(f"FATAL: Could not initialize Gemini client. Check API Key. Error: {e}")
+        return None
+
+
+# Global clients (initialized once, will be None if initialization failed but the app WILL start)
+storage_client = get_storage_client()
+vision_client = get_vision_client()
+gemini_client = get_gemini_client()
+
 app = Flask(__name__)
-storage_client = None
-gemini_client = None
-
-try:
-    if not GEMINI_API_KEY:
-        raise ValueError("GEMINI_API_KEY environment variable not set.")
-
-    # Initialize clients ONCE at application startup
-    storage_client = storage.Client()
-    gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-    print("✅ Gemini and Storage clients initialized successfully on startup.")
-
-except Exception as e:
-    # If this fails, the server will not start, preventing the 503 loop.
-    print(f"FATAL ERROR during client initialization: {e}")
-    traceback.print_exc()
-    raise
 
 
 # --- Utility Functions ---
 
 def extract_content(blob_bytes, blob_name):
-    """Extracts text content from bytes, handling only PDF for now."""
+    """Extracts text content from bytes, handling PDF, DOCX, and others."""
+    blob_name_lower = blob_name.lower()
 
-    if blob_name.lower().endswith('.pdf'):
-        text = ""
+    if blob_name_lower.endswith('.pdf'):
         try:
-            # 1. Use BytesIO to process the file in memory
+            # Use BytesIO to process the file in memory
             file_stream = io.BytesIO(blob_bytes)
-            reader = PdfReader(file_stream)
 
-            # 2. Extract text from all pages
-            for page in reader.pages:
-                text += page.extract_text() or ""
+            # Use pdfminer.six for robust text extraction
+            output_string = io.StringIO()
+            extract_text_to_fp(file_stream, output_string)
+            text = output_string.getvalue()
 
             # Basic cleanup
             text = re.sub(r'\s+', ' ', text).strip()
             return text
 
         except Exception as e:
-            print(f"Error reading PDF {blob_name} with pypdf: {e}")
+            print(f"Error reading PDF {blob_name} with pdfminer.six: {e}")
+            # OCR Fallback is removed for simplicity, leaving only text extraction
             return "ERROR: Could not read PDF content."
 
 
-    elif blob_name.lower().endswith('.docx'):
+    elif blob_name_lower.endswith('.docx'):
         text = ""
         try:
-            document = docx.Document(io.BytesIO(blob_bytes))
+            # Use Document class from python-docx
+            document = Document(io.BytesIO(blob_bytes))
             for paragraph in document.paragraphs:
                 text += paragraph.text + "\n"
             return text.strip()
@@ -71,7 +101,7 @@ def extract_content(blob_bytes, blob_name):
             print(f"Error reading DOCX {blob_name}: {e}")
             return "ERROR: Could not read DOCX content."
 
-    # Handle other files as plain text
+    # Handle other files as plain text (e.g., .txt)
     try:
         return blob_bytes.decode('utf-8', errors='ignore')
     except Exception as e:
@@ -82,10 +112,12 @@ def extract_content(blob_bytes, blob_name):
 def get_gcs_files_context(directory_path, bucket_name):
     """
     Fetches, downloads, processes, and limits content from GCS.
-
-    This function consolidates the processing to avoid running the same logic twice.
-    It uses the global storage_client.
+    Uses the global storage_client.
     """
+    if storage_client is None:
+        print("ERROR: Storage client not initialized.")
+        return []
+
     print(f"🔍 Fetching files from gs://{bucket_name}/{directory_path}/")
 
     bucket = storage_client.bucket(bucket_name)
@@ -94,10 +126,8 @@ def get_gcs_files_context(directory_path, bucket_name):
 
     file_data = []
 
-    # Process files sequentially for simplicity and reduced resource contention,
-    # or use ThreadPoolExecutor if document count is very high.
     for blob in blobs:
-        # Filter: Skip the folder itself and empty files
+        # Filter: Skip the folder itself and process only allowed file types
         if blob.name == prefix or blob.size == 0 or not blob.name.lower().endswith(('.docx', '.pdf', '.txt')):
             continue
 
@@ -112,7 +142,8 @@ def get_gcs_files_context(directory_path, bucket_name):
 
             if content_string and not content_string.startswith("ERROR:"):
                 file_data.append({
-                    "name": blob.name.replace(prefix, ""),  # Keep just the filename
+                    "name": blob.name.replace(prefix, ""),  # Filename only
+                    "full_path": blob.name,  # CRITICAL FIX: Add full path for reference
                     "content": content_string
                 })
         except Exception as e:
@@ -125,8 +156,11 @@ def get_gcs_files_context(directory_path, bucket_name):
 
 def perform_search(query: str, directory_path: str = ""):
     """
-    Performs the RAG search using the globally initialized clients.
+    Performs the RAG search using the globally initialized clients with multi-model fallback.
     """
+    # בדיקת אתחול קליינט, כדי למנוע קריסה
+    if not gemini_client:
+        return {"status": "Fallback", "details": "Gemini client not initialized. Check API Key."}
 
     # 1. Retrieve and process documents (consolidated logic)
     documents = get_gcs_files_context(directory_path, BUCKET_NAME)
@@ -137,55 +171,76 @@ def perform_search(query: str, directory_path: str = ""):
     # 2. Prepare Prompt for Gemini
     document_context = "\n\n--- DOCUMENTS CONTEXT ---\n\n"
     for doc in documents:
-        # Use the filename as a clear boundary for the model
-        document_context += f"File: {doc['name']}\nContent:\n{doc['content']}\n---\n"
+        # Use the full path and name for the LLM context
+        document_context += f"File: {doc['name']}\nFull Path: {doc['full_path']}\nContent:\n{doc['content']}\n---\n"
 
-    #system_instruction2 = (
-    #    "אתה אנליסט מסמכים מקצועי. התשובה שלך צריכה להיות עברית רהוטה וברורה. "
-    #    "השתמש אך ורק במידע שסופק בתוך 'DOCUMENTS CONTEXT' כדי לענות על שאלת המשתמש. "
-    #    "אם המידע אינו קיים ב-CONTEXT, ענה: 'המידע לגבי [שאלה ספציפית] אינו נמצא במסמכים שסופקו'."
-    #)
-
+    # NOTE: Reverting to the successful Hebrew-aware system instruction
     system_instruction = (
-        "YYou are a helpful assistant. Use ONLY the provided document text as document_context "
-        "to answer the question. If the information is not in the text, reply #$$$# "
-        # "the answer cannot be found in the provided document."
+        "You are a helpful assistant. Provide the answer in Hebrew (עברית). "
+        "Use ONLY the provided document text as context "
+        "to answer the question. If the information is not in the text, reply #$$$#"
     )
 
-    user_prompt = (
-        f"{document_context}\n\n"
-        f"\n\n---"
-        f"\n\nשאלה אנליטית: {query}"
-    )
     final_prompt = (
         f"DOCUMENT CONTEXT:\n---\n{document_context}\n---\n\n"
         f"QUESTION: {query}"
     )
 
+    # --- 3. קריאה ל-Gemini API עם לוגיקת Fallback ---
+
+    # --- ניסיון 1: מודל ראשי (Flash) ---
     try:
-        # 3. Call Gemini API (using the global client)
         response = gemini_client.models.generate_content(
             model='gemini-2.5-flash',
             contents=final_prompt,
             config={"system_instruction": system_instruction}
         )
+        print("✅ Response received from gemini-2.5-flash.")
 
-        # Success: Return the full analytical response
-        return {
-            "query": query,
-            "status": "Success (RAG)",
-            "response": response.text,
-            "sources": [doc['name'] for doc in documents]  # Optionally return the source filenames
-        }
+    except errors.APIError as e:  # Use specific APIError for better handling
+        # בדיקה אם השגיאה היא עומס יתר זמני (503 UNAVAILABLE)
+        if '503 UNAVAILABLE' not in str(e) and '500' not in str(e):
+            # אם זו שגיאה אחרת (כגון מפתח שגוי), מחזירים אותה מיד
+            print(f"Non-503/500 Gemini API Error: {e}")
+            traceback.print_exc()
+            return {
+                "status": "API Error",
+                "details": f"Check your request or API configuration. Error: {e}"
+            }
+
+        # --- ניסיון 2: מודל Fallback (Pro) ---
+        print("⚠️ gemini-2.5-flash overloaded (503/500). Falling back to gemini-2.5-pro...")
+        try:
+            response = gemini_client.models.generate_content(
+                model='gemini-2.5-pro',
+                contents=final_prompt,
+                config={"system_instruction": system_instruction}
+            )
+            print("✅ Response received from gemini-2.5-pro (Fallback Success).")
+        except Exception as fallback_e:
+            # אם ה-fallback נכשל, מחזירים סטטוס כשל
+            print(f"❌ Fallback to gemini-2.5-pro failed as well: {fallback_e}")
+            traceback.print_exc()
+            return {
+                "status": "API Error",
+                "details": f"Both gemini-2.5-flash and gemini-2.5-pro are unavailable. Error: {fallback_e}"
+            }
 
     except Exception as e:
-        # Handle API errors (e.g., key expired, invalid request, token overflow)
-        print(f"Gemini API Error or runtime error: {e}")
-        traceback.print_exc()
+        # Catch any other unexpected non-API errors (e.g., network)
+        print(f"Unhandled non-API error: {e}")
         return {
             "status": "API Error",
-            "details": f"Check your request size or API configuration. Details: {e}"
+            "details": f"An unknown error occurred during Gemini call: {e}"
         }
+
+    # הצלחה: מחזירים את התשובה מהמודל שהצליח (Flash או Pro)
+    return {
+        "query": query,
+        "status": "Success (RAG)",
+        "response": response.text,
+        "sources": [doc['name'] for doc in documents]
+    }
 
 
 # --- Flask Routes ---
@@ -197,6 +252,11 @@ def search():
         data = request.get_json()
         query = data.get("query", "")
         directory_path = data.get("directory_path", "")
+
+        # Initial client check for immediate 500
+        if storage_client is None or gemini_client is None:
+            return jsonify({"status": "Error",
+                            "details": "Server failed critical client initialization. Check BUCKET_NAME and GEMINI_API_KEY environment variables."}), 500
 
         if not query or not directory_path:
             return jsonify({"status": "Error", "details": "Missing 'query' or 'directory_path' in request."}), 400
@@ -213,3 +273,9 @@ def search():
         print(f"Request handling error: {e}")
         traceback.print_exc()
         return jsonify({"status": "Error", "details": f"Internal server error: {e}"}), 500
+
+
+# Run the app locally (for debugging)
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port, debug=True)
