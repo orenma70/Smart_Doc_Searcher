@@ -59,7 +59,7 @@ sequence_pattern = re.compile(r'\d+')
 LATIN_LETTER_PATTERNnNum = re.compile(r'[a-zA-Z]+|\d+')
 
 # החלף את ה-URL בכתובת המלאה שלך
-API_URL="https://smart-doc-searcher-api-359127107055.us-central1.run.app/search"
+API_URL="https://smart-doc-searcher-api-v2-359127107055.us-central1.run.app/search"
 
 #
 
@@ -73,7 +73,7 @@ def on_search_button_clicked(self, query, directory_path):
 
     try:
         # 1. שליחת הבקשה ל-Cloud Run API
-        url = "https://smart-doc-searcher-api-359127107055.us-central1.run.app/search"
+        url = API_URL
 
         payload = {
             "query": query,
@@ -142,38 +142,6 @@ def on_search_button_clicked(self, query, directory_path):
 
         # הצגת הודעה קריטית למשתמש
         QtWidgets.QMessageBox.critical(self, "שגיאה", error_message)
-
-def on_search_button_clicked2(self, query, directory_path):
-
-    try:
-        # Send the query to the cloud API
-        # 2. בניית הבקשה
-        url = "https://smart-doc-searcher-api-359127107055.us-central1.run.app/search"
-        payload = {
-            "query": query,
-            "directory_path": directory_path
-        }
-
-
-        # 3. שליחת הבקשה
-        response = requests.post(
-            url,
-            json=payload,
-            headers={'Content-Type': 'application/json'}
-        )
-        response.raise_for_status()  # לזרוק שגיאה אם הסטטוס הוא 4xx/5xx
-
-        # 4. עיבוד התוצאה
-        results_data = response.json()
-
-        return results_data
-
-    except requests.exceptions.RequestException as e:
-        # Handle connection errors or bad responses
-        print(f"Error communicating with API: {e}")
-        QtWidgets.QMessageBox.critical(self, "Error", "Could not connect to search service.")
-
-
 
 def convert_pdf_page_to_pixmap(page, page_number: int):
     """
@@ -1259,7 +1227,7 @@ class SearchApp(QtWidgets.QWidget):
         query = self.search_input.text().strip()
         self.results_area.clear()
 
-        if self.cloudgemini_radio.isChecked():
+        if self.cloudgemini_radio.isChecked() and self.gemini_radio.isChecked():
             normalized_path = folder.replace("\\", "/")
             prefix_to_strip = CLIENT_PREFIX_TO_STRIP.replace("\\", "/")
             # 3. Strip trailing slashes from both for consistent comparison (e.g., C:/a/מצרפי/)

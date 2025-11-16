@@ -48,21 +48,9 @@ def get_gemini_client():
         return None
 
 # Global clients (Initialized once at startup)
-
-def initialize_clients():
-    """Initializes global clients if they are None (Lazy Load)."""
-    global storage_client, gemini_client  # <-- CRITICAL: Tells Python to update the module-level variables
-
-    # Initialize GCS only if it's currently None
-    if storage_client is None:
-        storage_client = get_storage_client()
-
-    # Initialize Gemini only if it's currently None
-    if gemini_client is None:
-        gemini_client = get_gemini_client()
-
-    # Return True only if both were successfully initialized
-    return storage_client is not None and gemini_client is not None
+storage_client = get_storage_client()
+#vision_client = get_vision_client() # Kept for consistency, but unused in RAG logic
+gemini_client = get_gemini_client()
 
 
 # --- Utility Functions (RAG Logic) ---
@@ -223,13 +211,7 @@ app = Flask(__name__)
 
 @app.route('/search', methods=['POST'])
 def search_endpoint():
-    # 1. CRITICAL: Initialize clients and check the return value immediately
-    if not initialize_clients():
-        # If initialization fails (due to IAM/API Key), return 500 with a clear message
-        print("LOG: Request failed - Service initialization failed. Check server logs for IAM/API Key errors.")
-        return jsonify({"error": "Service initialization failed. Check server logs for IAM/API Key errors."}), 500
-
-    # 2. Get JSON data (Now safe to proceed because clients are confirmed initialized)
+    # 1. Get JSON data
     data = request.get_json(silent=True)
 
     if data is None:
