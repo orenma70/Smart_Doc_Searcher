@@ -39,7 +39,7 @@ else:
     label_gpt_str = " הכנסת השאלה --->"
     #search_input_words_str = "Enter here search words"
     search_input_question_str = "הכנסת השאלה"
-    setText_str = "מה גיל הילדים?"   # "מי האקטואר?
+    setText_str = "מי היא חברת הליסינג?"   #  "מה גיל הילדים?"    "מי האקטואר?
     clear_btn_str = "! לחצן הניקוי !"
 
     nongemini_radio_str = "  חיפוש מילים  "

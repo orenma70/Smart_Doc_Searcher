@@ -13,7 +13,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 4. Copy the single, merged application file
-COPY app_core.py .
+COPY search_core.py .
 
 # 5. Start Gunicorn (Points to app_core:app)
-CMD exec gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 8 app_core:app
+CMD exec gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 8 search_core:app
