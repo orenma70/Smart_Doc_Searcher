@@ -8,6 +8,7 @@ from google.cloud import vision_v1 as vision
 from google import genai
 from google.genai import errors
 from flask import Flask, request, jsonify
+import  pdfplumber
 from pdfminer.high_level import extract_text_to_fp
 from docx import Document
 import time  # New import required for polling the async job
@@ -24,6 +25,28 @@ MAX_CHARS_PER_DOC = 100000
 
 
 # --- Client Getters ---
+def extract_pdf_with_positions(file_bytes):
+    """Returns [
+        { "page": 1, "lines": ["...", "..."] },
+        { "page": 2, "lines": ["...", "..."] },
+        ...
+    ]"""
+    pages_output = []
+
+    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+        for page_index, page in enumerate(pdf.pages, start=1):
+            lines = page.extract_text().split("\n") if page.extract_text() else []
+            pages_output.append({
+                "page": page_index,
+                "lines": lines
+            })
+
+    return pages_output
+
+def extract_docx_with_lines(file_bytes):
+    document = Document(io.BytesIO(file_bytes))
+    lines = [p.text for p in document.paragraphs]
+    return [{"page": 1, "lines": lines}]
 
 def get_storage_client():
     """Initializes and returns the Google Cloud Storage client."""
@@ -300,12 +323,40 @@ def get_gcs_files_context(directory_path, bucket_name):
                 else:
                     relative_name = blob.name
 
-                    # 2. Append document record
-                file_data.append({
-                    "name": relative_name,  # short/relative name
-                    "full_path": blob.name,  # full path in bucket
-                    "content": content_string
-                })
+                if blob_name_lower.endswith('.pdf'):
+                    pages = extract_pdf_with_positions(file_content_bytes)
+                    file_data.append({
+                        "name": relative_name,
+                        "full_path": blob.name,
+                        "content": content_string,
+                        "pages": pages  # <-- NEW
+                    })
+                    continue
+
+                elif blob_name_lower.endswith('.docx'):
+                    pages = extract_docx_with_lines(file_content_bytes)
+                    file_data.append({
+                        "name": relative_name,
+                        "full_path": blob.name,
+                        "content": content_string,
+                        "pages": pages
+                    })
+                    continue
+
+                else:
+                    # TXT
+                    text = file_content_bytes.decode("utf-8", errors="ignore")
+                    file_data.append({
+                        "name": relative_name,
+                        "full_path": blob.name,
+                        "content": content_string,
+                        "pages": [
+                            {"page": 1, "lines": text.split("\n")}
+                        ]
+                    })
+                    continue
+
+
 
 
             except Exception as e:
@@ -321,6 +372,36 @@ def get_gcs_files_context(directory_path, bucket_name):
         print(f"Error listing/downloading files from GCS: {e}")
         return []
 
+
+
+def split_into_paragraphs(text: str):
+    paragraphs = []
+    current = []
+
+    for line in text.split("\n"):
+        stripped = line.strip()
+
+        if not stripped:
+            # real blank line → paragraph break
+            if current:
+                paragraphs.append("\n".join(current))
+                current = []
+            continue
+
+        current.append(stripped)
+
+        # Detect paragraph boundary:
+        # Ends with punctuation OR next line likely new paragraph.
+        if stripped.endswith((".", "!", "?", ":")):
+            # Commit current paragraph
+            paragraphs.append("\n".join(current))
+            current = []
+
+    # Final paragraph
+    if current:
+        paragraphs.append("\n".join(current))
+
+    return paragraphs
 
 
 def match_line(line: str, words: list[str], mode="any", match_type="partial"):
@@ -351,8 +432,31 @@ def match_line(line: str, words: list[str], mode="any", match_type="partial"):
     return any(check_word(w) for w in words)
 
 
+def highlight_matches_html(text: str, words: list[str], match_type: str = "partial"):
+    """
+    Wrap matching words in <span> so they render highlighted in HTML.
+    match_type: 'partial' or 'full'
+    """
+    if not words:
+        return text
+
+    # Build regex based on match type
+    if match_type == "full":
+        # whole word match
+        pattern = r"\b(" + "|".join(re.escape(w) for w in words) + r")\b"
+    else:
+        # partial / substring match
+        pattern = r"(" + "|".join(re.escape(w) for w in words) + r")"
+
+    regex = re.compile(pattern, re.IGNORECASE)
+
+    def repl(m):
+        return f"<span style='background-color: blue; font-weight:bold;'>{m.group(0)}</span>"
+
+    return regex.sub(repl, text)
+
 def simple_keyword_search(query: str, directory_path: str = "",
-                          mode="any", match_type="partial"):
+                          mode="any", match_type="partial", show_mode = "line"):
     """
     Simple non-AI keyword search:
     - mode: 'any' or 'all'
@@ -377,17 +481,34 @@ def simple_keyword_search(query: str, directory_path: str = "",
 
     for doc in documents:
         matched_lines = []
+        matched_lines_html = []
 
-        for line in doc["content"].split("\n"):
-            if match_line(line, words, mode=mode, match_type=match_type):
-                matched_lines.append(line)
+        if show_mode == "line":
+
+            for line in doc["content"].split("\n"):
+                if match_line(line, words, ...):
+                    matched_lines.append(line)
+                    matched_lines_html.append(highlight_matches_html(line, words, match_type=match_type)
+                    )
+
+        else:
+            paragraphs = split_into_paragraphs(doc["content"])
+
+            for paragraph in paragraphs:
+                if match_line(paragraph, words, mode=mode, match_type=match_type):
+                    matched_lines.append(paragraph)
+                    matched_lines_html.append(highlight_matches_html(paragraph, words, match_type=match_type)
+        )
 
         if matched_lines:
             results.append({
                 "file": doc["name"],
                 "full_path": doc["full_path"],
-                "matches": matched_lines
+                "pages" : doc["pages"],
+                "matches": matched_lines,
+                "matches_html": matched_lines_html  # highlighted HTML
             })
+
 
     return {
         "status": "ok",
@@ -502,6 +623,7 @@ def simple_search_endpoint():
     # Mapping user config → internal parameters
     mode = config.get("word_logic", "any")       # "any" / "all"
     match_type = config.get("match_type", "partial")  # "partial" / "full"
+    show_mode = config.get("show_mode", "paragraph")
 
     if not query or not directory_path:
         return jsonify({"error": "Missing 'query' or 'directory_path' in request."}), 400
@@ -511,7 +633,8 @@ def simple_search_endpoint():
             query,
             directory_path,
             mode=mode,
-            match_type=match_type
+            match_type=match_type,
+            show_mode=show_mode
         )
         return jsonify(result), 200
 

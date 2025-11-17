@@ -4,6 +4,8 @@ Flask==3.0.3
 gunicorn==22.0.0
 google-genai==0.1.0
 google-cloud-storage==2.16.0
-pdfminer.six==20221105
+pdfminer.six
 python-docx==1.1.0
 google-cloud-vision==3.7.2
+pdfplumber
+Pillow==10.2.0

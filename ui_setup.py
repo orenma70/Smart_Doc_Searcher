@@ -167,6 +167,10 @@ def setup_ui(self):
 
     self.cloudgemini_radio = QtWidgets.QRadioButton("Cloud Gemini")
     self.cloudgemini_radio.setChecked(True)
+
+    self.show_line_mode_radio = QtWidgets.QRadioButton("show line")
+    self.show_line_mode_radio.setChecked(True)
+
     if isLTR:
         search_layout.addWidget(self.search_btn)
         search_layout.addWidget(self.label)
@@ -174,9 +178,11 @@ def setup_ui(self):
         search_layout.addWidget(self.save_btn)
         search_layout.addWidget(self.clear_btn)
         search_layout.addWidget(self.cloudgemini_radio)
+        search_layout.addWidget(self.show_line_mode_radio)
 
 
     else:
+        search_layout.addWidget(self.show_line_mode_radio)
         search_layout.addWidget(self.cloudgemini_radio)
         search_layout.addWidget(self.save_btn)
         search_layout.addWidget(self.clear_btn)

@@ -102,11 +102,12 @@ def format_simple_search_results(results_data):
     for doc in matches:
         file_name = doc.get("file", "ללא שם")
         full_path = doc.get("full_path", "")
+        pagesline = doc.get("pages", "")
         dir_only = os.path.dirname(full_path)
 
-        lines = doc.get("matches", [])
+        lines = doc.get("matches_html", [])
 
-        output_lines.append(f"📄 קובץ: {file_name}  📄 ספריה: {dir_only}   <br>")
+        output_lines.append(f"   שורה:{pagesline.lines}   עמוד: {pagesline.page} 📄 קובץ: {file_name}   ספריה: {dir_only}   <br>")
 
         #output_lines.append(f"נתיב מלא: {full_path} <br>")
 
@@ -144,13 +145,20 @@ def on_search_button_clicked(self, query, directory_path):
             else:
                 str1_mode = "partial"
 
+            if self.show_line_mode_radio.isChecked():
+                str3_mode = "line"
+            else:
+                str3_mode = "paragraph"
+
+
             payload = {
                 "query": query,
                 "directory_path": directory_path,
                 "search_config": {
                     "mode": "keyword",
                     "match_type": str1_mode,
-                    "word_logic": str2_mode
+                    "word_logic": str2_mode,
+                    "show_mode": str3_mode
                 }
             }
 
