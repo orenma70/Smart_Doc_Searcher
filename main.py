@@ -26,11 +26,15 @@ import shutil
 from google import genai
 from google.genai.errors import APIError
 from google.genai import types
-
-
 import fitz  # PyMuPDF
 import tempfile
 
+
+# --- CONCEPTS (These would be filled by your UI state) ---
+# Imagine these variables capture the user's selection from radio buttons or checkboxes.
+
+# The server receives this JSON, reads "match_type": "fuzzy", and runs
+# an algorithm that ignores the misspelling 'polisy' and matches it to 'policy'.
 
 
 chat_gpt = False
@@ -59,26 +63,96 @@ sequence_pattern = re.compile(r'\d+')
 LATIN_LETTER_PATTERNnNum = re.compile(r'[a-zA-Z]+|\d+')
 
 # החלף את ה-URL בכתובת המלאה שלך
-API_URL="https://smart-doc-searcher-api-v2-359127107055.us-central1.run.app/search"
-
+API_search_URL="https://smart-doc-searcher-api-v2-359127107055.us-central1.run.app/search"
+# החלף את ה-URL בכתובת המלאה שלך
+API_simple_search_URL="https://smart-doc-searcher-api-v2-359127107055.us-central1.run.app/simple_search"
 #
 
+# Function to implement in your class:
+def display_keyword_matches(self, match_results):
+    display_text = "<h3>Keyword Search Results</h3>"
+
+    if not match_results:
+        display_text += "<p>No matches found with the current configuration.</p>"
+
+    for match in match_results:
+        doc_name = match.get('document_name', 'Unknown Document')
+        match_type = match.get('match_type', 'N/A')
+        snippets = match.get('snippets', [])
+
+        display_text += f"<hr><h4>File: {doc_name}</h4>"
+        display_text += f"<p>Match Type: <b>{match_type}</b></p>"
+
+        # Display up to the first 5 snippets for brevity
+        for i, snippet in enumerate(snippets[:5]):
+            display_text += f"<p>— Snippet {i + 1}: {snippet}</p>"
+
+    return display_text
+
+def format_simple_search_results(results_data):
+    if results_data.get("status") != "ok":
+        return f"🛑 שגיאה: {results_data}"
+
+    matches = results_data.get("matches", [])
+    if not matches:
+        return "לא נמצאו תוצאות."
+
+    output_lines = []
+
+    for doc in matches:
+        file_name = doc.get("file", "ללא שם")
+        full_path = doc.get("full_path", "")
+        dir_only = os.path.dirname(full_path)
+
+        lines = doc.get("matches", [])
+
+        output_lines.append(f"📄 קובץ: {file_name}  📄 ספריה: {dir_only}   <br>")
+
+        #output_lines.append(f"נתיב מלא: {full_path} <br>")
 
 
-# פונקציה זו מחליפה את הפונקציה הקיימת שלך,
-# ומניחה ש'self' הוא אובייקט ה-GUI המכיל את self.results_text_area.
+        for line in lines:
+            output_lines.append(f"   • {line}<br>")
+
+
+
+    return "\n".join(output_lines)
+
 
 def on_search_button_clicked(self, query, directory_path):
     # הפונקציה המדויקת ששלחת, בתוספת לוגיקת עיבוד התוצאה.
 
     try:
         # 1. שליחת הבקשה ל-Cloud Run API
-        url = API_URL
 
-        payload = {
-            "query": query,
-            "directory_path": directory_path
-        }
+        if self.gemini_radio.isChecked():
+            url = API_search_URL
+            payload = {
+                "query": query,
+                "directory_path": directory_path
+            }
+        else:
+
+            url = API_simple_search_URL
+            if self.all_word_search_radio.isChecked():
+                str2_mode = "all"
+            else:
+                str2_mode = "any"
+
+            if self.exact_search_radio.isChecked():
+                str1_mode = "full"
+            else:
+                str1_mode = "partial"
+
+            payload = {
+                "query": query,
+                "directory_path": directory_path,
+                "search_config": {
+                    "mode": "keyword",
+                    "match_type": str1_mode,
+                    "word_logic": str2_mode
+                }
+            }
 
         response = requests.post(
             url,
@@ -106,6 +180,11 @@ def on_search_button_clicked(self, query, directory_path):
             )
 
             # אם יש מקורות, ניתן להוסיף אותם כאן (כרגע הקוד לא מוציא אותם)
+        elif status == "ok":
+
+            # --- Keyword Search Mode ---
+            formatted_output = format_simple_search_results(results_data)
+
 
         elif status.endswith('(Fallback)'):
             # --- פורמט Fallback (חיפוש מילות מפתח) ---
@@ -1227,7 +1306,7 @@ class SearchApp(QtWidgets.QWidget):
         query = self.search_input.text().strip()
         self.results_area.clear()
 
-        if self.cloudgemini_radio.isChecked() and self.gemini_radio.isChecked():
+        if self.cloudgemini_radio.isChecked():
             normalized_path = folder.replace("\\", "/")
             prefix_to_strip = CLIENT_PREFIX_TO_STRIP.replace("\\", "/")
             # 3. Strip trailing slashes from both for consistent comparison (e.g., C:/a/מצרפי/)
@@ -1246,11 +1325,13 @@ class SearchApp(QtWidgets.QWidget):
 
             folder = gcs_directory_path
 
-
             answer = on_search_button_clicked(self, query, folder)
+
+
             #perform_search(query, directory_path=folder)
             display_gemini_result(self, self.results_area, answer, folder)
             return
+
 
         if not os.path.isdir(folder):
             QtWidgets.QMessageBox.warning(self, "שגיאה", "התיקיה לא קיימת.")

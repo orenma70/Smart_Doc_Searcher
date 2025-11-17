@@ -20,7 +20,7 @@ GCS_OCR_OUTPUT_PATH = "gs://oren-smart-search-docs-1205/vision_ocr_output/"
 # --- Configuration & Initialization ---
 # NOTE: Using a fixed BUCKET_NAME is fine, but typically pulled from environment variables.
 BUCKET_NAME = "oren-smart-search-docs-1205"
-MAX_CHARS_PER_DOC = 10000
+MAX_CHARS_PER_DOC = 100000
 
 
 # --- Client Getters ---
@@ -200,75 +200,6 @@ def detect_text_gcs_async(gcs_uri, gcs_destination_uri):
         traceback.print_exc()
         return f"ERROR: Error processing OCR output: {e}"
 
-def detect_text_gcs_async2(gcs_uri, gcs_destination_uri):
-    """
-    Performs asynchronous OCR on a PDF in GCS using the Vision API.
-    gcs_uri: Input GCS path of the PDF.
-    gcs_destination_uri: Temporary GCS path for output files.
-    """
-    if vision_client is None:
-        return "ERROR: Vision client not initialized."
-
-    print(f"👁️ Starting ASYNC PDF OCR for {gcs_uri} -> {gcs_destination_uri}")
-
-    # Configuration for the PDF input
-    input_config = {"gcs_source": {"uri": gcs_uri}}
-
-    # Configuration for the JSON output path
-    output_config = {"gcs_destination": {"uri": gcs_destination_uri}}
-
-    # The Vision API call
-    operation = vision_client.async_batch_document_text_detection(
-        requests=[{"input_config": input_config, "output_config": output_config}]
-    )
-
-    # Poll the operation for completion (Max 5 minutes)
-    try:
-        # NOTE: We use a short timeout for Cloud Run to prevent excessive billing/deadlock
-        result = operation.result(timeout=300)
-    except Exception as e:
-        print(f"❌ ASYNC OCR operation failed or timed out: {e}")
-        return f"ERROR: ASYNC OCR failed or timed out: {e}"
-
-    # Read the results from the output folder
-    full_text = ""
-    storage_client = get_storage_client()
-    bucket_name = gcs_destination_uri.split("/")[2]
-    prefix = "/".join(gcs_destination_uri.split("/")[3:])
-
-    # Clean up the prefix and bucket name for blob listing
-    prefix = prefix.strip('/') + '/'
-
-    try:
-        bucket = storage_client.bucket(bucket_name)
-        blobs = bucket.list_blobs(prefix=prefix)
-
-        for blob in blobs:
-            if blob.name.endswith(".json"):
-                # Read JSON results file
-                json_data = json.loads(blob.download_as_bytes())
-                # Extract text from the page responses
-                for response in json_data.get("responses", []):
-                    if response.get("fullTextAnnotation"):
-                        full_text += response["fullTextAnnotation"]["text"] + "\n"
-
-                # Cleanup: Delete the generated JSON file immediately
-                blob.delete()
-
-                # Cleanup: Delete the folder's prefix file if it exists (placeholder file)
-        # This is a bit tricky, but often needed for cleanup. Skipping for simplicity.
-
-        if full_text:
-            print("✅ ASYNC PDF OCR successful.")
-            return full_text
-        else:
-            return "ERROR: ASYNC PDF OCR executed but found no text."
-
-    except Exception as e:
-        print(f"❌ Error reading OCR results or cleaning up: {e}")
-        traceback.print_exc()
-        return f"ERROR: Error processing OCR output: {e}"
-
 
 def extract_content(blob_bytes, blob_name, full_gcs_path):
     """
@@ -360,24 +291,112 @@ def get_gcs_files_context(directory_path, bucket_name):
                     print(f"⚠️ Truncating file {blob.name} to {MAX_CHARS_PER_DOC} chars.")
                     content_string = content_string[:MAX_CHARS_PER_DOC]
 
-                # Add valid content
-                if content_string:
-                    file_data.append({
-                        "name": blob.name.replace(prefix, "") if prefix else blob.name,
-                        "full_path": blob.name,
-                        "content": content_string
-                    })
+                if not content_string:
+                    continue
+
+                    # 1. Relative name (nice for UI and Gemini “File: …”)
+                if prefix and blob.name.startswith(prefix):
+                    relative_name = blob.name[len(prefix):]  # e.g. "file.pdf" or "sub/file.pdf"
+                else:
+                    relative_name = blob.name
+
+                    # 2. Append document record
+                file_data.append({
+                    "name": relative_name,  # short/relative name
+                    "full_path": blob.name,  # full path in bucket
+                    "content": content_string
+                })
+
 
             except Exception as e:
                 print(f"Error processing {blob.name}: {e}")
                 continue
 
         print(f"✅ Found {len(file_data)} usable documents in directory '{directory_path}'.")
+
+
         return file_data
 
     except Exception as e:
         print(f"Error listing/downloading files from GCS: {e}")
         return []
+
+
+
+def match_line(line: str, words: list[str], mode="any", match_type="partial"):
+    """
+    line        = the text line from the document
+    words       = user search words (already split)
+    mode        = "any" or "all"
+    match_type  = "partial" or "full"
+
+    Returns True if the line matches the search rule.
+    """
+
+    line_lower = line.lower()
+
+    # full match = whole word
+    if match_type == "full":
+        def check_word(word):
+            return re.search(rf"\b{re.escape(word.lower())}\b", line_lower)
+
+    # partial match = substring
+    else:
+        def check_word(word):
+            return word.lower() in line_lower
+
+    if mode == "all":
+        return all(check_word(w) for w in words)
+
+    return any(check_word(w) for w in words)
+
+
+def simple_keyword_search(query: str, directory_path: str = "",
+                          mode="any", match_type="partial"):
+    """
+    Simple non-AI keyword search:
+    - mode: 'any' or 'all'
+    - match_type: 'partial' or 'full'
+    """
+
+    documents = get_gcs_files_context(directory_path, BUCKET_NAME)
+
+    if not documents:
+        return {
+            "status": "ok",
+            "details": f"No usable documents found in '{directory_path}'.",
+            "matches": []
+        }
+
+    # Split query into separate words
+    words = [w.strip() for w in query.split() if w.strip()]
+    if not words:
+        return {"status": "ok", "details": "Empty query", "matches": []}
+
+    results = []
+
+    for doc in documents:
+        matched_lines = []
+
+        for line in doc["content"].split("\n"):
+            if match_line(line, words, mode=mode, match_type=match_type):
+                matched_lines.append(line)
+
+        if matched_lines:
+            results.append({
+                "file": doc["name"],
+                "full_path": doc["full_path"],
+                "matches": matched_lines
+            })
+
+    return {
+        "status": "ok",
+        "query": query,
+        "directory_path": directory_path,
+        "mode": mode,
+        "match_type": match_type,
+        "matches": results
+    }
 
 def perform_search(query: str, directory_path: str = ""):
     """Performs the RAG search using the globally initialized clients with multi-model fallback."""
@@ -463,6 +482,43 @@ def perform_search(query: str, directory_path: str = ""):
 # --- Flask Application Setup ---
 
 app = Flask(__name__)
+
+
+
+
+@app.route('/simple_search', methods=['POST'])
+def simple_search_endpoint():
+    # Make sure storage (and friends) are initialized
+    if not initialize_all_clients():
+        return jsonify({"error": "Service initialization failed. Check BUCKET / GEMINI / VISION settings."}), 500
+
+
+    data = request.get_json(silent=True) or {}
+
+    query = data.get('query', '').strip()
+    directory_path = data.get('directory_path', '').strip()
+    config = data.get("search_config", {})
+
+    # Mapping user config → internal parameters
+    mode = config.get("word_logic", "any")       # "any" / "all"
+    match_type = config.get("match_type", "partial")  # "partial" / "full"
+
+    if not query or not directory_path:
+        return jsonify({"error": "Missing 'query' or 'directory_path' in request."}), 400
+
+    try:
+        result = simple_keyword_search(
+            query,
+            directory_path,
+            mode=mode,
+            match_type=match_type
+        )
+        return jsonify(result), 200
+
+    except Exception as e:
+        print(f"ERROR in simple_search_endpoint: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/search', methods=['POST'])
