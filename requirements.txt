@@ -7,5 +7,5 @@ google-cloud-storage==2.16.0
 pdfminer.six
 python-docx==1.1.0
 google-cloud-vision==3.7.2
-pdfplumber
+#pdfplumber
 Pillow==10.2.0

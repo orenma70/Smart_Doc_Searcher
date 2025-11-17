@@ -29,6 +29,8 @@ if isLTR:
 
     save_btn_str = "Save to file"
 
+    paragraph_str = " Show in paragraphs "
+    line_str = " Show in line "
 else:
     btn_browse_str = "בחירת תיקיית חיפוש"
     tik_str = "    תיקיה--->"
@@ -39,7 +41,7 @@ else:
     label_gpt_str = " הכנסת השאלה --->"
     #search_input_words_str = "Enter here search words"
     search_input_question_str = "הכנסת השאלה"
-    setText_str = "מי היא חברת הליסינג?"   #  "מה גיל הילדים?"    "מי האקטואר?
+    setText_str =  "חוזה"  #  "מי היא חברת הליסינג?"     "מה גיל הילדים?"    "מי האקטואר?
     clear_btn_str = "! לחצן הניקוי !"
 
     nongemini_radio_str = "  חיפוש מילים  "
@@ -49,6 +51,9 @@ else:
     partial_search_radio_str = " התאמה חלקית"
     all_word_search_radio_str = "כל המילים"
     any_word_search_radio_str  = "חיפוש אחת המילים"
+
+    paragraph_str = " הצג את הפסקה "
+    line_str = " הצג את השורה "
 
     save_btn_str = "שמור לקובץ"
 
@@ -168,8 +173,6 @@ def setup_ui(self):
     self.cloudgemini_radio = QtWidgets.QRadioButton("Cloud Gemini")
     self.cloudgemini_radio.setChecked(True)
 
-    self.show_line_mode_radio = QtWidgets.QRadioButton("show line")
-    self.show_line_mode_radio.setChecked(True)
 
     if isLTR:
         search_layout.addWidget(self.search_btn)
@@ -178,11 +181,7 @@ def setup_ui(self):
         search_layout.addWidget(self.save_btn)
         search_layout.addWidget(self.clear_btn)
         search_layout.addWidget(self.cloudgemini_radio)
-        search_layout.addWidget(self.show_line_mode_radio)
-
-
     else:
-        search_layout.addWidget(self.show_line_mode_radio)
         search_layout.addWidget(self.cloudgemini_radio)
         search_layout.addWidget(self.save_btn)
         search_layout.addWidget(self.clear_btn)
@@ -330,10 +329,39 @@ def setup_ui(self):
                 }
             """)
 
+    self.show_line_mode_radio = QtWidgets.QRadioButton(line_str)
+    self.show_line_mode_radio.setFont(font)
+    self.show_line_mode_radio.setStyleSheet("""
+                 QRadioButton::indicator {
+                     width: 15px;
+                     height: 15px;
+                     border-radius: 6px;
+                     border: 6px solid black;
+                 }
+                 QRadioButton::indicator:checked {
+                     background-color: blue;
+                 }
+             """)
+
+    self.show_paragraph_mode_radio = QtWidgets.QRadioButton(paragraph_str)
+    self.show_paragraph_mode_radio.setFont(font)
+    self.show_paragraph_mode_radio.setChecked(True)
+    self.show_paragraph_mode_radio.setStyleSheet("""
+                     QRadioButton::indicator {
+                         width: 15px;
+                         height: 15px;
+                         border-radius: 6px;
+                         border: 6px solid black;
+                     }
+                     QRadioButton::indicator:checked {
+                         background-color: green;
+                     }
+                 """)
     # --- Create two button groups for mutual exclusivity
     self.mode_group1 = QtWidgets.QButtonGroup()
     self.mode_group2 = QtWidgets.QButtonGroup()
     self.mode_group3 = QtWidgets.QButtonGroup()
+    self.mode_group4 = QtWidgets.QButtonGroup()
 
     # Add buttons to respective groups
     self.mode_group1.addButton(self.gemini_radio)
@@ -345,6 +373,9 @@ def setup_ui(self):
     self.mode_group3.addButton(self.all_word_search_radio)
     self.mode_group3.addButton(self.any_word_search_radio)
 
+    self.mode_group4.addButton(self.show_paragraph_mode_radio)
+    self.mode_group4.addButton(self.show_line_mode_radio)
+
     # Layout for the two groups of radio buttons
     # First group (gemini / Search Words)
     #g1_layout = QtWidgets.QHBoxLayout()
@@ -354,6 +385,7 @@ def setup_ui(self):
     #g2_layout.addWidget(self.clear_btn)
 
     g3_container = QtWidgets.QWidget()
+
     if Vertic_Flag:
         g3_layout = QtWidgets.QVBoxLayout(g3_container)
     else:
@@ -390,8 +422,21 @@ def setup_ui(self):
                }
            """)
 
+    g12_container = QtWidgets.QWidget()
+    g12_layout = QtWidgets.QHBoxLayout(g12_container)
+    g12_layout.addWidget(self.show_paragraph_mode_radio)
+    g12_layout.addSpacing(30)
+    g12_layout.addWidget(self.show_line_mode_radio)
+    g12_layout.addStretch()
 
-
+    g12_container.setStyleSheet("""
+                 QWidget {
+                     background-color: #00F0FF; /* Alice Blue background */
+                     border: 2px solid #6495ED; /* Cornflower Blue border */
+                     border-radius: 6px;
+                     padding: 5px;
+                 }
+             """)
     both_groups_layout = QtWidgets.QHBoxLayout()
 
 
@@ -444,9 +489,11 @@ def setup_ui(self):
         g_group_layout = QtWidgets.QVBoxLayout(self.g_group_widget)
         g_group_layout.addWidget(g11_container)
         g_group_layout.addWidget(g1_container)
-        self.g1_container_width = max(g11_container.sizeHint().width(), g1_container.sizeHint().width()) + gap12
+        g_group_layout.addWidget(g12_container)
+        self.g1_container_width = max(g11_container.sizeHint().width(), g12_container.sizeHint().width(), g1_container.sizeHint().width()) + gap12
     else:
         g_group_layout = QtWidgets.QHBoxLayout(self.g_group_widget)
+        g_group_layout.addWidget(g12_container)
         g_group_layout.addWidget(g1_container)
         g_group_layout.addWidget(g11_container)
         self.g1_container_width = g11_container.sizeHint().width() + g1_container.sizeHint().width() + gap12 +small_gap - 4
@@ -498,6 +545,7 @@ def setup_ui(self):
     g2_container.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
     g1_container.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
     g11_container.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+    g12_container.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
 
     #g1_container.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
     #g2_container.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
@@ -506,6 +554,7 @@ def setup_ui(self):
     self.g1_container = g1_container
     self.g3_container = g3_container
     self.g11_container = g11_container
+    self.g12_container = g12_container
     self.both_groups_layout = both_groups_layout
 
 

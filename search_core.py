@@ -8,7 +8,7 @@ from google.cloud import vision_v1 as vision
 from google import genai
 from google.genai import errors
 from flask import Flask, request, jsonify
-import  pdfplumber
+#import  pdfplumber
 from pdfminer.high_level import extract_text_to_fp
 from docx import Document
 import time  # New import required for polling the async job
@@ -24,29 +24,80 @@ BUCKET_NAME = "oren-smart-search-docs-1205"
 MAX_CHARS_PER_DOC = 100000
 
 
-# --- Client Getters ---
-def extract_pdf_with_positions(file_bytes):
-    """Returns [
-        { "page": 1, "lines": ["...", "..."] },
-        { "page": 2, "lines": ["...", "..."] },
+def extract_docx_with_lines(file_content_bytes: bytes):
+    """
+    Given DOCX bytes, return:
+        [
+            {"page": 1, "lines": [...]}
+        ]
+
+    Note: DOCX files do not contain real pagination, so the whole document
+    is treated as page 1.
+    """
+    try:
+        doc_stream = io.BytesIO(file_content_bytes)
+        document = Document(doc_stream)
+    except Exception as e:
+        return f"ERROR: Failed to read DOCX: {e}"
+
+    lines = []
+
+    for para in document.paragraphs:
+        text = para.text.strip()
+        if text:
+            # Keep a clean version
+            lines.append(text)
+
+    # If we want to capture empty paragraphs as blank lines:
+    # for para in document.paragraphs:
+    #     lines.append(para.text)
+
+    # Since DOCX has no real pages, return everything as page 1
+    return [
+        {
+            "page": 1,
+            "lines": lines
+        }
+    ]
+
+
+def extract_pdf_with_positions(file_content_bytes: bytes):
+    """
+    Given raw PDF bytes, return a list of:
+    [
+        {"page": page_number, "lines": [line1, line2, ...]},
         ...
-    ]"""
-    pages_output = []
+    ]
+    where lines are the text lines extracted from each page.
+    """
+    pages = []
 
-    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-        for page_index, page in enumerate(pdf.pages, start=1):
-            lines = page.extract_text().split("\n") if page.extract_text() else []
-            pages_output.append({
-                "page": page_index,
-                "lines": lines
-            })
+    # Wrap the bytes in a BytesIO for PdfReader
+    pdf_stream = io.BytesIO(file_content_bytes)
 
-    return pages_output
+    try:
+        reader = PdfReader(pdf_stream)
+    except Exception as e:
+        # If the PDF is corrupt or cannot be opened, return a clear error string
+        # (your caller already checks for "ERROR:" prefix)
+        return f"ERROR: Failed to read PDF: {e}"
 
-def extract_docx_with_lines(file_bytes):
-    document = Document(io.BytesIO(file_bytes))
-    lines = [p.text for p in document.paragraphs]
-    return [{"page": 1, "lines": lines}]
+    for page_index, page in enumerate(reader.pages, start=1):
+        try:
+            # pypdf uses extract_text() to get page text
+            text = page.extract_text() or ""
+        except Exception as e:
+            print(f"⚠️ Failed to extract text from page {page_index}: {e}")
+            text = ""
+
+        # Split to logical lines
+        lines = text.splitlines()
+        pages.append({
+            "page": page_index,
+            "lines": lines,
+        })
+
+    return pages
 
 def get_storage_client():
     """Initializes and returns the Google Cloud Storage client."""
@@ -271,6 +322,7 @@ def extract_content(blob_bytes, blob_name, full_gcs_path):
     except Exception as e:
         return f"ERROR: Could not decode text content for {blob_name}. {e}"
 
+
 def get_gcs_files_context(directory_path, bucket_name):
     """Fetches, downloads, processes, and limits content from GCS."""
     if storage_client is None:
@@ -294,85 +346,108 @@ def get_gcs_files_context(directory_path, bucket_name):
             blob_name_lower = blob.name.lower()
 
             # Skip the "folder" itself, empty files, and unsupported extensions
-            if blob.name == prefix or blob.size == 0 or not blob_name_lower.endswith(SUPPORTED_EXTENSIONS):
+            if (
+                blob.name == prefix
+                or blob.size == 0
+                or not blob_name_lower.endswith(SUPPORTED_EXTENSIONS)
+            ):
                 continue
 
             try:
                 full_gcs_path = blob.name
 
-                # Download bytes for DOCX/PDF/TXT and let extract_content handle details (including OCR for PDFs)
+                # Download bytes for DOCX/PDF/TXT and let extract_content handle details
                 file_content_bytes = blob.download_as_bytes()
                 content_string = extract_content(file_content_bytes, blob.name, full_gcs_path)
 
                 # Check for errors before processing
-                if content_string and content_string.startswith("ERROR:"):
+                if isinstance(content_string, str) and content_string.startswith("ERROR:"):
                     print(f"⚠️ Skipping file {blob.name} due to extraction error.")
                     continue
 
-                # Truncate content if too long
-                if content_string and len(content_string) > MAX_CHARS_PER_DOC:
+                if not content_string:
+                    # nothing extracted – skip file
+                    continue
+
+                # Truncate content if too long (this is the SAME logic as before)
+                if len(content_string) > MAX_CHARS_PER_DOC:
                     print(f"⚠️ Truncating file {blob.name} to {MAX_CHARS_PER_DOC} chars.")
                     content_string = content_string[:MAX_CHARS_PER_DOC]
 
-                if not content_string:
-                    continue
-
-                    # 1. Relative name (nice for UI and Gemini “File: …”)
+                # 1. Relative name (nice for UI and Gemini “File: …”)
                 if prefix and blob.name.startswith(prefix):
                     relative_name = blob.name[len(prefix):]  # e.g. "file.pdf" or "sub/file.pdf"
                 else:
                     relative_name = blob.name
 
-                if blob_name_lower.endswith('.pdf'):
-                    pages = extract_pdf_with_positions(file_content_bytes)
-                    file_data.append({
-                        "name": relative_name,
-                        "full_path": blob.name,
-                        "content": content_string,
-                        "pages": pages  # <-- NEW
-                    })
-                    continue
+                # 2. Pages structure for page+line info (NEW), but safe:
+                #    if extractors fail, just fall back to a single-page view of content.
+                pages = []
 
-                elif blob_name_lower.endswith('.docx'):
-                    pages = extract_docx_with_lines(file_content_bytes)
-                    file_data.append({
-                        "name": relative_name,
-                        "full_path": blob.name,
-                        "content": content_string,
-                        "pages": pages
-                    })
-                    continue
+                try:
+                    if blob_name_lower.endswith('.pdf'):
+                        # Expected: [{"page": 1, "lines": [...]}, ...]
+                        pages = extract_pdf_with_positions(file_content_bytes)
 
-                else:
-                    # TXT
-                    text = file_content_bytes.decode("utf-8", errors="ignore")
-                    file_data.append({
-                        "name": relative_name,
-                        "full_path": blob.name,
-                        "content": content_string,
-                        "pages": [
+                    elif blob_name_lower.endswith('.docx'):
+                        # Expected: [{"page": 1, "lines": [...]}, ...]
+                        pages = extract_docx_with_lines(file_content_bytes)
+
+                    else:
+                        # TXT: split content into lines as one page
+                        text = file_content_bytes.decode("utf-8", errors="ignore")
+                        pages = [
                             {"page": 1, "lines": text.split("\n")}
                         ]
-                    })
-                    continue
 
+                except Exception as pe:
+                    print(f"⚠️ Page extraction failed for {blob.name}: {pe}")
+                    # Fallback: just one page with `content_string` split into lines
+                    pages = [
+                        {"page": 1, "lines": content_string.split("\n")}
+                    ]
 
-
+                    # Normalize pages: make sure it's always a list of {"page": int, "lines": list[str]}
+                if isinstance(pages, str):
+                    # extractor returned "ERROR: ..." or some text
+                    if pages.startswith("ERROR:"):
+                        print(f"⚠️ Page extractor error for {blob.name}: {pages}")
+                        pages = [
+                            {"page": 1, "lines": content_string.split("\n")}
+                        ]
+                    else:
+                        pages = [
+                            {"page": 1, "lines": pages.split("\n")}
+                        ]
+                elif not pages:
+                    # empty or None -> fallback to content_string
+                    pages = [
+                        {"page": 1, "lines": content_string.split("\n")}
+                    ]
+                elif isinstance(pages, list) and pages and isinstance(pages[0], str):
+                    # list of strings -> treat as lines of page 1
+                    pages = [
+                        {"page": 1, "lines": pages}
+                    ]
+                # Final append – this is what simple_keyword_search expects
+                file_data.append({
+                    "name": relative_name,     # was effectively blob.name before
+                    "full_path": blob.name,
+                    "content": content_string,  # SAME field your search uses
+                    "pages": pages              # NEW, but extra only
+                })
 
             except Exception as e:
                 print(f"Error processing {blob.name}: {e}")
                 continue
 
+
         print(f"✅ Found {len(file_data)} usable documents in directory '{directory_path}'.")
-
-
         return file_data
 
     except Exception as e:
         print(f"Error listing/downloading files from GCS: {e}")
         return []
-
-
 
 def split_into_paragraphs(text: str):
     paragraphs = []
@@ -455,7 +530,150 @@ def highlight_matches_html(text: str, words: list[str], match_type: str = "parti
 
     return regex.sub(repl, text)
 
-def simple_keyword_search(query: str, directory_path: str = "",
+
+def simple_keyword_search(query: str,
+                          directory_path: str = "",
+                          mode="any",
+                          match_type="partial",
+                          show_mode="line"):
+    """
+    Simple non-AI keyword search:
+    - mode: 'any' or 'all'
+    - match_type: 'partial' or 'full'
+    - show_mode: 'line' or 'paragraph'
+    """
+
+    documents = get_gcs_files_context(directory_path, BUCKET_NAME)
+
+    if not documents:
+        return {
+            "status": "ok",
+            "details": f"No usable documents found in '{directory_path}'.",
+            "matches": []
+        }
+
+    # Split query into separate words
+    words = [w.strip() for w in query.split() if w.strip()]
+    if not words:
+        return {"status": "ok", "details": "Empty query", "matches": []}
+
+    results = []
+
+    for doc in documents:
+        matched_items = []          # text (line or paragraph)
+        matched_items_html = []     # highlighted HTML
+        match_positions = []        # {"page": p, "line": line_idx}
+
+        # --- Normalize pages defensively (so we don't crash) ---
+        raw_pages = doc.get("pages")
+        pages = []
+
+        if isinstance(raw_pages, list):
+            if raw_pages and isinstance(raw_pages[0], dict) and "lines" in raw_pages[0]:
+                pages = raw_pages
+            elif raw_pages and isinstance(raw_pages[0], str):
+                pages = [{"page": 1, "lines": raw_pages}]
+        elif isinstance(raw_pages, str):
+            pages = [{"page": 1, "lines": raw_pages.split("\n")}]
+
+        if not pages:
+            content = doc.get("content", "")
+            pages = [{"page": 1, "lines": content.split("\n")}]
+
+        # =========================
+        #   LINE MODE (unchanged)
+        # =========================
+        if show_mode == "line":
+            for page_entry in pages:
+                page_num = page_entry.get("page", 1)
+                lines = page_entry.get("lines", []) or []
+
+                for line_idx, line in enumerate(lines, start=1):
+                    if match_line(line, words, mode=mode, match_type=match_type):
+                        matched_items.append(line)
+                        matched_items_html.append(
+                            highlight_matches_html(line, words, match_type=match_type)
+                        )
+                        match_positions.append({
+                            "page": page_num,
+                            "line": line_idx
+                        })
+
+        # =========================
+        #   PARAGRAPH MODE
+        # =========================
+        else:
+            # Restore ORIGINAL behavior: use your split_into_paragraphs on doc["content"]
+            content = doc.get("content", "")
+            paragraphs = split_into_paragraphs(content)
+
+            for paragraph in paragraphs:
+                if match_line(paragraph, words, mode=mode, match_type=match_type):
+                    matched_items.append(paragraph)
+                    matched_items_html.append(
+                        highlight_matches_html(paragraph, words, match_type=match_type)
+                    )
+
+                    # NEW: find (page, line) for this paragraph using pages
+                    page_num, line_idx = find_paragraph_position_in_pages(paragraph, pages)
+                    match_positions.append({
+                        "page": page_num,
+                        "line": line_idx
+                    })
+
+        if matched_items:
+            results.append({
+                "file": doc["name"],
+                "full_path": doc["full_path"],
+                # keep pages for later use / preview if you want
+                "pages": pages,
+                "matches": matched_items,
+                "matches_html": matched_items_html,
+                "match_positions": match_positions
+            })
+
+    return {
+        "status": "ok",
+        "query": query,
+        "directory_path": directory_path,
+        "mode": mode,
+        "match_type": match_type,
+        "show_mode": show_mode,
+        "matches": results
+    }
+
+def find_paragraph_position_in_pages(paragraph_text: str, pages):
+    """
+    Try to find the (page, line) where this paragraph starts,
+    by matching its first non-empty line inside pages.
+    """
+    if not pages:
+        return 1, 1
+
+    # Take the first non-empty line from the paragraph
+    first_line = None
+    for raw_line in paragraph_text.split("\n"):
+        s = raw_line.strip()
+        if s:
+            first_line = s
+            break
+
+    if not first_line:
+        return 1, 1
+
+    first_line_lower = first_line.lower()
+
+    for page_entry in pages:
+        page_num = page_entry.get("page", 1)
+        lines = page_entry.get("lines", []) or []
+        for line_idx, doc_line in enumerate(lines, start=1):
+            if doc_line and first_line_lower in doc_line.lower():
+                return page_num, line_idx
+
+    # Fallback if not found
+    return 1, 1
+
+def simple_keyword_search2(query: str, directory_path: str = "",
                           mode="any", match_type="partial", show_mode = "line"):
     """
     Simple non-AI keyword search:
@@ -504,7 +722,7 @@ def simple_keyword_search(query: str, directory_path: str = "",
             results.append({
                 "file": doc["name"],
                 "full_path": doc["full_path"],
-                "pages" : doc["pages"],
+                #"pages" : doc["pages"],
                 "matches": matched_lines,
                 "matches_html": matched_lines_html  # highlighted HTML
             })

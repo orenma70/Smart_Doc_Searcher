@@ -102,12 +102,20 @@ def format_simple_search_results(results_data):
     for doc in matches:
         file_name = doc.get("file", "ללא שם")
         full_path = doc.get("full_path", "")
-        pagesline = doc.get("pages", "")
+        match_positions = doc.get("match_positions","")
+        if match_positions:
+            first = match_positions[0]
+            line = first["line"]
+            page = first["page"]
+        else:
+            line = None
+            page = None
+
         dir_only = os.path.dirname(full_path)
 
         lines = doc.get("matches_html", [])
 
-        output_lines.append(f"   שורה:{pagesline.lines}   עמוד: {pagesline.page} 📄 קובץ: {file_name}   ספריה: {dir_only}   <br>")
+        output_lines.append(f" שורה:  {line}  עמוד: {page}  📄 קובץ: {file_name}  📄 ספריה: {dir_only}   <br>")
 
         #output_lines.append(f"נתיב מלא: {full_path} <br>")
 

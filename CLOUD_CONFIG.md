@@ -6,7 +6,7 @@ This file documents the critical configuration settings that are applied directl
 
 | Setting | Value | Rationale |
 | :--- | :--- | :--- |
-| **Service Name** | `smart-doc-searcher-api` | Name used in the deployment command. |
+| **Service Name** | `smart-doc-searcher-api-v2` | Name used in the deployment command. |
 | **Region** | `us-central1` | Region where the service is deployed. |
 | **Minimum Instances** | **[PLACEHOLDER - MIN INSTANCES]** | **CRITICAL for cost/performance.** `0` saves money but causes cold starts. `1` or higher is better for low latency. |
 | **Maximum Instances** | **[PLACEHOLDER - MAX INSTANCES]** | Limits scaling and max spend (e.g., `10`). |
