@@ -62,11 +62,9 @@ LATIN_LETTER_PATTERN = re.compile(r'[a-zA-Z]')
 sequence_pattern = re.compile(r'\d+')
 LATIN_LETTER_PATTERNnNum = re.compile(r'[a-zA-Z]+|\d+')
 
-# החלף את ה-URL בכתובת המלאה שלך
-API_search_URL="https://smart-doc-searcher-api-v2-359127107055.us-central1.run.app/search"
-# החלף את ה-URL בכתובת המלאה שלך
-API_simple_search_URL="https://smart-doc-searcher-api-v2-359127107055.us-central1.run.app/simple_search"
-#
+from config_reader import read_setup
+API_search_URL=read_setup("API_SEARCH_URL")
+API_simple_search_URL=read_setup("API_SIMPLE_SEARCH_URL")
 
 # Function to implement in your class:
 def display_keyword_matches(self, match_results):

@@ -21,9 +21,16 @@ GCS_OCR_OUTPUT_PATH = "gs://oren-smart-search-docs-1205/vision_ocr_output/"
 
 # --- Configuration & Initialization ---
 # NOTE: Using a fixed BUCKET_NAME is fine, but typically pulled from environment variables.
-BUCKET_NAME = "oren-smart-search-docs-1205"
+#BUCKET_NAME = "oren-smart-search-docs-1205"
+
+
 MAX_CHARS_PER_DOC = 100000
 
+import os
+
+
+from config_reader import read_setup
+BUCKET_NAME=read_setup("BUCKET_NAME")
 
 def extract_docx_with_lines(file_content_bytes: bytes):
     """
