@@ -6,7 +6,6 @@ Vertic_Flag = True
 isLTR = False # left to right or RTL
 chat_mode = True
 
-
 if isLTR:
     btn_browse_str = "Choose Search Folder"
     tik_str = "Folder --->"
@@ -48,12 +47,12 @@ else:
     gemini_radio_str = " שאל את הצ'אט "
 
     exact_search_radio_str = " התאמה מלאה "
-    partial_search_radio_str = " התאמה חלקית"
-    all_word_search_radio_str = "כל המילים"
-    any_word_search_radio_str  = "חיפוש אחת המילים"
+    partial_search_radio_str = " התאמה חלקית "
+    all_word_search_radio_str = " כל המילים "
+    any_word_search_radio_str  = " חיפוש אחת המילים"
 
-    paragraph_str = " הצג את הפסקה "
-    line_str = " הצג את השורה "
+    paragraph_str = " הצגת כל הפסקה "
+    line_str = " הצגת שורה "
 
     save_btn_str = "שמור לקובץ"
 
@@ -192,8 +191,8 @@ def setup_ui(self):
 
     layout.addLayout(search_layout)
     self.nongemini_radio = QtWidgets.QRadioButton(nongemini_radio_str)
-    if not chat_mode:
-        self.nongemini_radio.setChecked(True)
+    #if not chat_mode:
+    #self.nongemini_radio.setChecked(True)
 
 
     if  not chat_mode:
@@ -339,7 +338,7 @@ def setup_ui(self):
                      border: 6px solid black;
                  }
                  QRadioButton::indicator:checked {
-                     background-color: blue;
+                     background-color: green;
                  }
              """)
 
@@ -392,7 +391,6 @@ def setup_ui(self):
         g3_layout = QtWidgets.QHBoxLayout(g3_container)
 
     g3_layout.addWidget(self.nongemini_radio)
-    #g3_layout.addSpacing(30)
     g3_layout.addWidget(self.gemini_radio)
     g3_layout.addStretch()
 
@@ -404,12 +402,12 @@ def setup_ui(self):
                padding: 5px;
            }
        """)
-
+    small_gap = 10
     g11_container = QtWidgets.QWidget()
     g11_layout = QtWidgets.QHBoxLayout(g11_container)
 
     g11_layout.addWidget(self.all_word_search_radio)
-    g11_layout.addSpacing(30)
+    g11_layout.addSpacing(small_gap)
     g11_layout.addWidget(self.any_word_search_radio)
     g11_layout.addStretch()
 
@@ -425,7 +423,7 @@ def setup_ui(self):
     g12_container = QtWidgets.QWidget()
     g12_layout = QtWidgets.QHBoxLayout(g12_container)
     g12_layout.addWidget(self.show_paragraph_mode_radio)
-    g12_layout.addSpacing(30)
+    g12_layout.addSpacing(small_gap)
     g12_layout.addWidget(self.show_line_mode_radio)
     g12_layout.addStretch()
 
@@ -439,14 +437,9 @@ def setup_ui(self):
              """)
     both_groups_layout = QtWidgets.QHBoxLayout()
 
-
-
-
-
-
     # Second group (Partial / Exact)
     #g2_layout = QtWidgets.QHBoxLayout()
-    small_gap = 10
+
     g1_container = QtWidgets.QWidget()
     g1_container.setStyleSheet("""
                    QWidget {
@@ -457,8 +450,6 @@ def setup_ui(self):
                    }
                """)
     g1_layout = QtWidgets.QHBoxLayout(g1_container)
-    g1_layout.addSpacing(small_gap)
-    #g1_layout.addWidget(QtWidgets.QLabel("Your label text here"))
     g1_layout.addWidget(self.partial_search_radio)
     g1_layout.addSpacing(small_gap)
     g1_layout.addWidget(self.exact_search_radio)

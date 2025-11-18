@@ -8,10 +8,11 @@ from google.cloud import vision_v1 as vision
 from google import genai
 from google.genai import errors
 from flask import Flask, request, jsonify
-#import  pdfplumber
+import  pdfplumber
 from pdfminer.high_level import extract_text_to_fp
 from docx import Document
 import time  # New import required for polling the async job
+from pypdf import PdfReader
 
 # ... existing configurations ...
 
@@ -60,44 +61,42 @@ def extract_docx_with_lines(file_content_bytes: bytes):
         }
     ]
 
-
-def extract_pdf_with_positions(file_content_bytes: bytes):
+def find_all_word_positions_in_pdf(file_content_bytes: bytes, query: str):
     """
-    Given raw PDF bytes, return a list of:
+    Return a list of all occurrences:
     [
-        {"page": page_number, "lines": [line1, line2, ...]},
+        {"page": 4, "line": 13, "text": "...."},
         ...
     ]
-    where lines are the text lines extracted from each page.
     """
-    pages = []
+    query_lower = query.lower()
+    positions = []
 
-    # Wrap the bytes in a BytesIO for PdfReader
     pdf_stream = io.BytesIO(file_content_bytes)
-
     try:
         reader = PdfReader(pdf_stream)
     except Exception as e:
-        # If the PDF is corrupt or cannot be opened, return a clear error string
-        # (your caller already checks for "ERROR:" prefix)
-        return f"ERROR: Failed to read PDF: {e}"
+        print(f"ERROR: Failed to read PDF: {e}")
+        return positions
 
     for page_index, page in enumerate(reader.pages, start=1):
         try:
-            # pypdf uses extract_text() to get page text
             text = page.extract_text() or ""
         except Exception as e:
             print(f"⚠️ Failed to extract text from page {page_index}: {e}")
-            text = ""
+            continue
 
-        # Split to logical lines
         lines = text.splitlines()
-        pages.append({
-            "page": page_index,
-            "lines": lines,
-        })
 
-    return pages
+        for line_index, line in enumerate(lines, start=1):
+            if query_lower in line.lower():
+                positions.append({
+                    "page": page_index,
+                    "line": line_index
+                    #"text": line,
+                })
+
+    return positions
 
 def get_storage_client():
     """Initializes and returns the Google Cloud Storage client."""
@@ -323,7 +322,7 @@ def extract_content(blob_bytes, blob_name, full_gcs_path):
         return f"ERROR: Could not decode text content for {blob_name}. {e}"
 
 
-def get_gcs_files_context(directory_path, bucket_name):
+def get_gcs_files_context(directory_path, bucket_name,query):
     """Fetches, downloads, processes, and limits content from GCS."""
     if storage_client is None:
         print("⚠️ Storage client is not initialized.")
@@ -387,7 +386,7 @@ def get_gcs_files_context(directory_path, bucket_name):
                 try:
                     if blob_name_lower.endswith('.pdf'):
                         # Expected: [{"page": 1, "lines": [...]}, ...]
-                        pages = extract_pdf_with_positions(file_content_bytes)
+                        pages = find_all_word_positions_in_pdf(file_content_bytes, query)
 
                     elif blob_name_lower.endswith('.docx'):
                         # Expected: [{"page": 1, "lines": [...]}, ...]
@@ -434,7 +433,7 @@ def get_gcs_files_context(directory_path, bucket_name):
                     "name": relative_name,     # was effectively blob.name before
                     "full_path": blob.name,
                     "content": content_string,  # SAME field your search uses
-                    "pages": pages              # NEW, but extra only
+                    "pages1": pages              # NEW, but extra only
                 })
 
             except Exception as e:
@@ -543,7 +542,7 @@ def simple_keyword_search(query: str,
     - show_mode: 'line' or 'paragraph'
     """
 
-    documents = get_gcs_files_context(directory_path, BUCKET_NAME)
+    documents = get_gcs_files_context(directory_path, BUCKET_NAME, query)
 
     if not documents:
         return {
@@ -566,6 +565,7 @@ def simple_keyword_search(query: str,
 
         # --- Normalize pages defensively (so we don't crash) ---
         raw_pages = doc.get("pages")
+
         pages = []
 
         if isinstance(raw_pages, list):
@@ -584,6 +584,7 @@ def simple_keyword_search(query: str,
         #   LINE MODE (unchanged)
         # =========================
         if show_mode == "line":
+
             for page_entry in pages:
                 page_num = page_entry.get("page", 1)
                 lines = page_entry.get("lines", []) or []
@@ -598,7 +599,6 @@ def simple_keyword_search(query: str,
                             "page": page_num,
                             "line": line_idx
                         })
-
         # =========================
         #   PARAGRAPH MODE
         # =========================
@@ -625,8 +625,6 @@ def simple_keyword_search(query: str,
             results.append({
                 "file": doc["name"],
                 "full_path": doc["full_path"],
-                # keep pages for later use / preview if you want
-                "pages": pages,
                 "matches": matched_items,
                 "matches_html": matched_items_html,
                 "match_positions": match_positions
@@ -672,70 +670,6 @@ def find_paragraph_position_in_pages(paragraph_text: str, pages):
 
     # Fallback if not found
     return 1, 1
-
-def simple_keyword_search2(query: str, directory_path: str = "",
-                          mode="any", match_type="partial", show_mode = "line"):
-    """
-    Simple non-AI keyword search:
-    - mode: 'any' or 'all'
-    - match_type: 'partial' or 'full'
-    """
-
-    documents = get_gcs_files_context(directory_path, BUCKET_NAME)
-
-    if not documents:
-        return {
-            "status": "ok",
-            "details": f"No usable documents found in '{directory_path}'.",
-            "matches": []
-        }
-
-    # Split query into separate words
-    words = [w.strip() for w in query.split() if w.strip()]
-    if not words:
-        return {"status": "ok", "details": "Empty query", "matches": []}
-
-    results = []
-
-    for doc in documents:
-        matched_lines = []
-        matched_lines_html = []
-
-        if show_mode == "line":
-
-            for line in doc["content"].split("\n"):
-                if match_line(line, words, ...):
-                    matched_lines.append(line)
-                    matched_lines_html.append(highlight_matches_html(line, words, match_type=match_type)
-                    )
-
-        else:
-            paragraphs = split_into_paragraphs(doc["content"])
-
-            for paragraph in paragraphs:
-                if match_line(paragraph, words, mode=mode, match_type=match_type):
-                    matched_lines.append(paragraph)
-                    matched_lines_html.append(highlight_matches_html(paragraph, words, match_type=match_type)
-        )
-
-        if matched_lines:
-            results.append({
-                "file": doc["name"],
-                "full_path": doc["full_path"],
-                #"pages" : doc["pages"],
-                "matches": matched_lines,
-                "matches_html": matched_lines_html  # highlighted HTML
-            })
-
-
-    return {
-        "status": "ok",
-        "query": query,
-        "directory_path": directory_path,
-        "mode": mode,
-        "match_type": match_type,
-        "matches": results
-    }
 
 def perform_search(query: str, directory_path: str = ""):
     """Performs the RAG search using the globally initialized clients with multi-model fallback."""
