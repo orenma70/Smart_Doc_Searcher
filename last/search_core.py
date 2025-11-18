@@ -8,7 +8,7 @@ from google.cloud import vision_v1 as vision
 from google import genai
 from google.genai import errors
 from flask import Flask, request, jsonify
-#import  pdfplumber
+import  pdfplumber
 from pdfminer.high_level import extract_text_to_fp
 from docx import Document
 import time  # New import required for polling the async job
@@ -322,7 +322,7 @@ def extract_content(blob_bytes, blob_name, full_gcs_path):
         return f"ERROR: Could not decode text content for {blob_name}. {e}"
 
 
-def get_gcs_files_context(directory_path, bucket_name,query=""):
+def get_gcs_files_context(directory_path, bucket_name,query):
     """Fetches, downloads, processes, and limits content from GCS."""
     if storage_client is None:
         print("⚠️ Storage client is not initialized.")
@@ -677,7 +677,7 @@ def perform_search(query: str, directory_path: str = ""):
         return {"status": "Fallback", "details": "Gemini client not initialized. Check API Key."}
 
     # 1. Retrieve and process documents
-    documents = get_gcs_files_context(directory_path, BUCKET_NAME,"")
+    documents = get_gcs_files_context(directory_path, BUCKET_NAME)
 
     if not documents:
         # If no documents were processed successfully (could be due to OCR failure on all files)
