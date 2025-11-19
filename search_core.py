@@ -1,4 +1,5 @@
 import os
+import time
 import re
 import json
 import io
@@ -11,13 +12,12 @@ from flask import Flask, request, jsonify
 #import  pdfplumber
 from pdfminer.high_level import extract_text_to_fp
 from docx import Document
-import time  # New import required for polling the async job
 from pypdf import PdfReader
 
 # ... existing configurations ...
 
 # NEW: Required for Vision API Asynchronous PDF OCR output
-GCS_OCR_OUTPUT_PATH = "gs://oren-smart-search-docs-1205/vision_ocr_output/"
+
 
 # --- Configuration & Initialization ---
 # NOTE: Using a fixed BUCKET_NAME is fine, but typically pulled from environment variables.
@@ -29,8 +29,13 @@ MAX_CHARS_PER_DOC = 100000
 import os
 
 
-from config_reader import read_setup
-BUCKET_NAME=read_setup("BUCKET_NAME")
+
+#from config_reader import read_setup
+#BUCKET_NAME=read_setup("BUCKET_NAME")
+BUCKET_NAME="oren-smart-search-docs-1205"
+
+GCS_OCR_OUTPUT_PATH = "gs://" + BUCKET_NAME + "/vision_ocr_output/"
+
 
 def extract_docx_with_lines(file_content_bytes: bytes):
     """
@@ -289,6 +294,7 @@ def extract_content(blob_bytes, blob_name, full_gcs_path):
     - DOCX files use the docx library.
     - Other files are treated as plain text.
     """
+
     blob_name_lower = blob_name.lower()
     prefix = "gs://" + BUCKET_NAME + "/"
     gcs_uri = prefix + full_gcs_path
@@ -331,6 +337,7 @@ def extract_content(blob_bytes, blob_name, full_gcs_path):
 
 def get_gcs_files_context(directory_path, bucket_name,query=""):
     """Fetches, downloads, processes, and limits content from GCS."""
+
     if storage_client is None:
         print("⚠️ Storage client is not initialized.")
         return []
@@ -346,6 +353,7 @@ def get_gcs_files_context(directory_path, bucket_name,query=""):
 
     try:
         bucket = storage_client.bucket(bucket_name)
+
         blobs = bucket.list_blobs(prefix=prefix)
 
         for blob in blobs:
@@ -365,7 +373,6 @@ def get_gcs_files_context(directory_path, bucket_name,query=""):
                 # Download bytes for DOCX/PDF/TXT and let extract_content handle details
                 file_content_bytes = blob.download_as_bytes()
                 content_string = extract_content(file_content_bytes, blob.name, full_gcs_path)
-
                 # Check for errors before processing
                 if isinstance(content_string, str) and content_string.startswith("ERROR:"):
                     print(f"⚠️ Skipping file {blob.name} due to extraction error.")
@@ -394,7 +401,6 @@ def get_gcs_files_context(directory_path, bucket_name,query=""):
                     if blob_name_lower.endswith('.pdf'):
                         # Expected: [{"page": 1, "lines": [...]}, ...]
                         pages = find_all_word_positions_in_pdf(file_content_bytes, query)
-
                     elif blob_name_lower.endswith('.docx'):
                         # Expected: [{"page": 1, "lines": [...]}, ...]
                         pages = extract_docx_with_lines(file_content_bytes)
@@ -551,6 +557,7 @@ def simple_keyword_search(query: str,
 
     documents = get_gcs_files_context(directory_path, BUCKET_NAME, query)
 
+
     if not documents:
         return {
             "status": "ok",
@@ -638,6 +645,7 @@ def simple_keyword_search(query: str,
             })
 
     return {
+        "debug": "",
         "status": "ok",
         "query": query,
         "directory_path": directory_path,
@@ -768,26 +776,34 @@ app = Flask(__name__)
 
 @app.route('/simple_search', methods=['POST'])
 def simple_search_endpoint():
-    # Make sure storage (and friends) are initialized
+    # --- TIMER 1: Client Initialization (Should be refactored) ---
+    timer1 = time.time()
+    time_stamp = " "
+
+    # NOTE: Calling this on every request adds overhead. If this takes 14s,
+    # it must be moved out of the request handler.
     if not initialize_all_clients():
+        print("ERROR: Service initialization failed.")
         return jsonify({"error": "Service initialization failed. Check BUCKET / GEMINI / VISION settings."}), 500
 
 
+    # --- Setup and Validation ---
     data = request.get_json(silent=True) or {}
 
     query = data.get('query', '').strip()
     directory_path = data.get('directory_path', '').strip()
     config = data.get("search_config", {})
 
-    # Mapping user config → internal parameters
-    mode = config.get("word_logic", "any")       # "any" / "all"
-    match_type = config.get("match_type", "partial")  # "partial" / "full"
+    mode = config.get("word_logic", "any")
+    match_type = config.get("match_type", "partial")
     show_mode = config.get("show_mode", "paragraph")
 
     if not query or not directory_path:
         return jsonify({"error": "Missing 'query' or 'directory_path' in request."}), 400
 
     try:
+
+
         result = simple_keyword_search(
             query,
             directory_path,
@@ -795,13 +811,16 @@ def simple_search_endpoint():
             match_type=match_type,
             show_mode=show_mode
         )
+
+        time_stamp += f"simple_search_endpoint={round(100 * (time.time() - timer1))/100},"
+
+        result["debug"] += time_stamp
         return jsonify(result), 200
 
     except Exception as e:
         print(f"ERROR in simple_search_endpoint: {e}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
-
 
 @app.route('/search', methods=['POST'])
 def search_endpoint():

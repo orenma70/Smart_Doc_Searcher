@@ -1,4 +1,4 @@
-# gcloud run deploy smart-doc-searcher-api --source . --region us-central1 --allow-unauthenticated --timeout 300 --cpu-throttling --max-instances 1 --concurrency 1
+# gcloud run deploy smart-doc-searcher-api-v2 --source . --region us-central1 --allow-unauthenticated --timeout 300 --cpu-throttling --max-instances 1 --concurrency 1
      
 Flask==3.0.3
 gunicorn==22.0.0
@@ -8,5 +8,6 @@ pdfminer.six
 python-docx==1.1.0
 google-cloud-vision==3.7.2
 pypdf
-#pdfplumber 
 Pillow==10.2.0
+
+

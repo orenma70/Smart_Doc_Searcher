@@ -63,8 +63,15 @@ sequence_pattern = re.compile(r'\d+')
 LATIN_LETTER_PATTERNnNum = re.compile(r'[a-zA-Z]+|\d+')
 
 from config_reader import read_setup
-API_search_URL=read_setup("API_SEARCH_URL")
-API_simple_search_URL=read_setup("API_SIMPLE_SEARCH_URL")
+API_search_url=read_setup("API_search_url")
+API_simple_search_url=read_setup("API_simple_search_url")
+
+
+#API_search_url="https://smart-doc-searcher-api-v2-359127107055.us-central1.run.app/search"
+#API_simple_search_url="https://smart-doc-searcher-api-v2-359127107055.us-central1.run.app/simple_search"
+
+
+
 
 # Function to implement in your class:
 def display_keyword_matches(self, match_results):
@@ -115,6 +122,7 @@ def format_simple_search_results(results_data):
 
         output_lines.append(f" שורה:  {line}  עמוד: {page}  📄 קובץ: {file_name}  📄 ספריה: {dir_only}   <br>")
 
+        output_lines.append(f" debug:  {results_data.get("debug")}<br>")
         #output_lines.append(f"נתיב מלא: {full_path} <br>")
 
 
@@ -133,14 +141,13 @@ def on_search_button_clicked(self, query, directory_path):
         # 1. שליחת הבקשה ל-Cloud Run API
 
         if self.gemini_radio.isChecked():
-            url = API_search_URL
+            url = API_search_url
             payload = {
                 "query": query,
                 "directory_path": directory_path
             }
         else:
-
-            url = API_simple_search_URL
+            url = API_simple_search_url
             if self.all_word_search_radio.isChecked():
                 str2_mode = "all"
             else:
@@ -168,12 +175,20 @@ def on_search_button_clicked(self, query, directory_path):
                 }
             }
 
+        start_time = time.time()
+
         response = requests.post(
             url,
             json=payload,
             headers={'Content-Type': 'application/json'}
         )
+        # --- 2. מדידת זמן: התחלה ---
+
+        end_time = time.time()
+        latency = end_time - start_time
+        print(f"requests.post: {latency:.2f} seconds")
         response.raise_for_status()  # לזרוק שגיאה אם הסטטוס הוא 4xx/5xx
+
 
         # 2. עיבוד התוצאה
         results_data = response.json()
@@ -844,7 +859,6 @@ def docx2pdf_search(path, words, mode='any', search_mode='partial'):
         pass
     return results
 
-
 def pypdf_search(self, path, words, mode='any', search_mode='partial', read_from_temp=""):
     results = []
 
@@ -1316,6 +1330,10 @@ class SearchApp(QtWidgets.QWidget):
 
 
     def execute_search(self):
+        # --- 4. מדידת זמן: סיום והצגה ---
+        start_time = time.time()
+        print(f"Start search")
+
         folder = self.dir_edit.text().strip()
         query = self.search_input.text().strip()
         self.results_area.clear()
@@ -1339,7 +1357,12 @@ class SearchApp(QtWidgets.QWidget):
 
             folder = gcs_directory_path
 
+            end_time = time.time()
+            latency = end_time - start_time
+            print(f"pre on_search_button_clicked: {latency:.2f} seconds")
+
             answer = on_search_button_clicked(self, query, folder)
+
 
 
             #perform_search(query, directory_path=folder)
