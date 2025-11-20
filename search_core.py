@@ -13,16 +13,11 @@ from flask import Flask, request, jsonify
 from pdfminer.high_level import extract_text_to_fp
 from docx import Document
 from pypdf import PdfReader
+from typing import List
 
 # ... existing configurations ...
 
 # NEW: Required for Vision API Asynchronous PDF OCR output
-
-
-# --- Configuration & Initialization ---
-# NOTE: Using a fixed BUCKET_NAME is fine, but typically pulled from environment variables.
-#BUCKET_NAME = "oren-smart-search-docs-1205"
-
 
 MAX_CHARS_PER_DOC = 100000
 
@@ -30,11 +25,35 @@ import os
 
 
 
-#from config_reader import read_setup
-#BUCKET_NAME=read_setup("BUCKET_NAME")
-BUCKET_NAME="oren-smart-search-docs-1205"
+from config_reader import read_setup
+BUCKET_NAME=read_setup("BUCKET_NAME")
+#BUCKET_NAME="oren-smart-search-docs-1205"
 
 GCS_OCR_OUTPUT_PATH = "gs://" + BUCKET_NAME + "/vision_ocr_output/"
+
+DOCUMENT_CACHE = {} # <-- NEW: This will store extracted text to prevent re-downloading
+gcs_bucket = None     # <-- NEW: Store the GCS Bucket object once
+
+def extract_docx_with_lines2(blob_bytes: bytes) -> str:
+    """
+    Extracts text from a DOCX blob using the python-docx library.
+    This is a synchronous, fast, local operation.
+    """
+    try:
+        # Use a BytesIO buffer to treat the bytes as a file
+        doc_file = io.BytesIO(blob_bytes)
+
+        # python-docx extraction
+        document = Document(doc_file)
+        full_text = []
+        for paragraph in document.paragraphs:
+            full_text.append(paragraph.text)
+
+        return '\n'.join(full_text).strip()
+    except Exception as e:
+        print(f"ERROR: Failed to extract text from DOCX locally: {e}")
+        traceback.print_exc()
+        return "ERROR: DOCX extraction failed."
 
 
 def extract_docx_with_lines(file_content_bytes: bytes):
@@ -149,21 +168,38 @@ gemini_client = None
 
 
 def initialize_all_clients():
-    """Initializes all global clients (Storage, Gemini, Vision) if they are None."""
-    global storage_client, gemini_client, vision_client
+    """
+    Initializes clients only if they haven't been initialized yet.
+    This runs inside the request context on the first call.
+    """
+    # CRITICAL: Add gcs_bucket to the global list
+    global storage_client, gemini_client, vision_client, gcs_bucket
 
+    # 1. Initialize Storage Client and Bucket
     if storage_client is None:
         storage_client = get_storage_client()
 
+        # --- CRITICAL INSERTION POINT ---
+        if storage_client is not None and BUCKET_NAME and gcs_bucket is None:
+            try:
+                # This line sets the global gcs_bucket variable!
+                gcs_bucket = storage_client.bucket(BUCKET_NAME)
+                print(f"✅ GCS STEP 2: Successfully connected to Bucket '{BUCKET_NAME}'.")
+            except Exception as e:
+                print(f"FATAL: GCS STEP 2: FAILED to get Bucket '{BUCKET_NAME}'. Check IAM Permissions. Error: {e}")
+                gcs_bucket = None  # Ensure it is None on failure
+        # --- END CRITICAL INSERTION POINT ---
+
+    # 2. Initialize other clients
     if vision_client is None:
         vision_client = get_vision_client()
 
     if gemini_client is None:
         gemini_client = get_gemini_client()
 
-    # Return True only if all were successfully initialized
-    return storage_client is not None and gemini_client is not None and vision_client is not None
-
+    # Returns True only if all critical clients are initialized
+    return (storage_client is not None and gcs_bucket is not None and  # Ensure gcs_bucket is checked!
+            gemini_client is not None and vision_client is not None)
 
 # --- Utility Functions (RAG Logic) ---
 def detect_text_gcs(bucket_name, file_path):
@@ -461,6 +497,84 @@ def get_gcs_files_context(directory_path, bucket_name,query=""):
         print(f"Error listing/downloading files from GCS: {e}")
         return []
 
+
+
+
+
+
+def split_into_paragraphs2(text: str, paragraph_mode) -> List[str]:
+    """
+    Splits text into paragraphs. If the text appears as one block (i.e., few lines
+    from the parser), it intelligently attempts to split by sentence endings
+    (period, question mark, exclamation mark) to simulate paragraphs.
+
+    If the text has many line breaks, it defaults to splitting based on blank lines.
+    """
+
+    # 1. Standard Split (relies on parser-provided \n or blank lines)
+    lines = text.split("\n")
+
+    # Heuristic: If we have very few actual line breaks, the parser likely failed
+    # to recognize them and returned a giant text block.
+    if len(lines) < 10 and len(text) > 500:
+
+        # 2. Advanced Sentence Split (Fallback for "stuck" text)
+
+        # Define sentence termination patterns (., ?, !) followed by space or end of string
+        # This regex splits while keeping the punctuation at the end of the sentence
+        sentences = re.split(r'([.?!])\s*(?=[A-Zא-ת]|$)', text.strip())
+
+        paragraphs = []
+        current_paragraph = ""
+        sentence_count = 0
+
+        for part in sentences:
+            if not part.strip():
+                continue
+
+            # The regex sometimes splits into content and the punctuation mark itself.
+            if part in ['.', '?', '!']:
+                current_paragraph += part
+                if len(current_paragraph.split()) > 5:  # Require at least 5 words for a paragraph segment
+                    paragraphs.append(current_paragraph.strip())
+                    current_paragraph = ""
+                    sentence_count = 0
+                continue
+
+            # If the current paragraph is getting long, start a new one
+            if sentence_count >= 3:
+                if current_paragraph:
+                    paragraphs.append(current_paragraph.strip())
+                current_paragraph = part.strip()
+                sentence_count = 1
+            else:
+                current_paragraph += (" " + part.strip())
+                sentence_count += 1
+
+        # Add the final remaining paragraph segment
+        if current_paragraph:
+            paragraphs.append(current_paragraph.strip())
+
+        # If the advanced split created significantly more logical units, use it.
+        if len(paragraphs) > 1:
+            return paragraphs
+
+    # 3. Default Robust Split (Groups lines separated by blank space)
+    paragraphs = []
+    current = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            if current:
+                paragraphs.append(" ".join(current))
+                current = []
+            continue
+        current.append(stripped)
+    if current:
+        paragraphs.append(" ".join(current))
+
+    return paragraphs
+
 def split_into_paragraphs(text: str):
     paragraphs = []
     current = []
@@ -542,6 +656,235 @@ def highlight_matches_html(text: str, words: list[str], match_type: str = "parti
 
     return regex.sub(repl, text)
 
+def extract_pdf_local2(blob_bytes: bytes) -> str:
+    from pypdf import PdfReader
+    reader = PdfReader(io.BytesIO(blob_bytes))
+    # Efficiently extract text from all pages using a list comprehension
+    full_text = [page.extract_text() for page in reader.pages if page.extract_text()]
+    return "\n\n".join(full_text).strip()
+
+def extract_pdf_local(blob_bytes: bytes) -> str:
+    """
+    Extracts text from a PDF blob using the pdfminer.six library.
+    This is a synchronous, fast, local operation.
+    """
+    try:
+        # Use a BytesIO buffer to treat the bytes as a file
+        pdf_file = io.BytesIO(blob_bytes)
+
+        # pdfminer.six extraction
+        output_string = io.StringIO()
+        extract_text_to_fp(pdf_file, output_string)
+
+        return output_string.getvalue().strip()
+
+
+    except Exception as e:
+        print(f"ERROR: Failed to extract text from PDF locally: {e}")
+        traceback.print_exc()
+        return "ERROR: PDF extraction failed."
+
+
+def extract_content3(blob_bytes, full_gcs_path):
+    """
+    RESTORED EXTRACTION LOGIC: Simplified for the Caching Architecture.
+
+    NOTE: You MUST remove the asynchronous OCR call and any time-consuming
+    API calls from this function.
+    """
+    path_lower = full_gcs_path.lower()
+    extracted_text = ""
+
+    # Check for PDF or DOCX (the slow parsing steps)
+    if path_lower.endswith(('.pdf', '.docx')):
+
+        # ---------------------------------------------------------------------
+        # CRITICAL CHANGE: Instead of running the slow OCR,
+        # you need to read the pre-generated text output.
+        # This assumes your batch processing pipeline has already run.
+        # ---------------------------------------------------------------------
+
+        # Example if you store the OCR output as a separate .txt file:
+        # text_output_path = full_gcs_path.replace('.pdf', '.txt')
+        # try:
+        #     text_blob = gcs_bucket.blob(text_output_path)
+        #     extracted_text = text_blob.download_as_text()
+        # except Exception:
+        #     print(f"WARNING: OCR output not found for {full_gcs_path}. Running old logic.")
+        #     # Fallback to your old slow OCR logic ONLY IF you must (not recommended for speed)
+
+        # Since we cannot know your exact pre-processing pipeline,
+        # we must use the bytes you already downloaded and assume a local parser for the cache.
+
+        # **RE-INSERT YOUR ORIGINAL CODE HERE, BUT REMOVE THE ASYNC/GCS STUFF**
+        # Example for the cache warmup:
+        if path_lower.endswith('.pdf'):
+            # This is where your original 16-26s PDF parsing logic went
+            extracted_text = extract_pdf_local2(blob_bytes)
+
+        elif path_lower.endswith('.docx'):
+            # This is where your original DOCX parsing logic went
+            extracted_text = extract_docx_with_lines2(blob_bytes)
+
+
+    elif path_lower.endswith('.txt'):
+        # For text files, just decode the bytes
+        extracted_text = blob_bytes.decode('utf-8')
+
+    return extracted_text
+
+def initialize_document_cache(directory_path: str):
+    """
+    Builds the document cache by listing, downloading, and extracting content
+    from GCS. This runs ONCE in the request context.
+    """
+    global DOCUMENT_CACHE, gcs_bucket
+
+    if DOCUMENT_CACHE: return
+
+    if gcs_bucket is None:
+        print("FATAL: gcs_bucket is NULL. Cannot proceed with list_blobs.")
+        return
+
+    print(f"INFO: Starting document cache initialization (Expected delay: ~20s)...")
+    cache_start_time = time.time()
+    temp_cache = {}
+
+    try:
+        # 1. Setup prefix
+        prefix = directory_path.strip("/")
+        if prefix: prefix += "/"
+
+        # 2. List all blobs
+        blobs = gcs_bucket.list_blobs(prefix=prefix)
+
+        # NOTE: You MUST ensure your extract_content function is updated
+        # to use the new global client variables (vision_client, storage_client)
+        # and to return just the extracted text string.
+
+        for blob in blobs:
+            # (Your existing file filtering and processing logic goes here)
+            # ...
+            # 3. Inside the loop, you will call:
+            try:
+                blob_bytes = blob.download_as_bytes()
+                extracted_text = extract_content3(blob_bytes, blob.name)  # Call your existing extractor
+
+                if extracted_text and not extracted_text.startswith("ERROR:"):
+                    # 4. Save to the cache using the full path as the key
+                    temp_cache[blob.name] = {
+                        "filename": os.path.basename(blob.name),
+                        "full_path": blob.name,
+                        "content": extracted_text,  # The actual text content
+                    }
+                # ... (error handling)
+            except Exception as dl_e:
+                print(f"❌ ERROR downloading or processing {blob.name}: {dl_e}")
+                traceback.print_exc()
+
+        DOCUMENT_CACHE = temp_cache
+        cache_time = round(time.time() - cache_start_time, 2)
+        print(f"SUCCESS: Cache populated with {len(DOCUMENT_CACHE)} files in {cache_time} seconds.")
+
+    except Exception as e:
+        print(f"ERROR during cache initialization (List or Download phase): {e}")
+        traceback.print_exc()
+
+
+def simple_keyword_search2(query: str,
+                          directory_path: str = "",
+                          mode="any",
+                          match_type="partial",
+                          show_mode="line"):
+    """
+    FAST simple keyword search using the pre-warmed DOCUMENT_CACHE.
+    - directory_path is only used to filter the cache, not to hit GCS.
+    """
+    if not DOCUMENT_CACHE:
+        return {
+            "status": "error",
+            "details": "Document cache is empty or failed to initialize during startup.",
+            "matches": []
+        }
+
+    # 1. Filter the cache based on the requested directory_path
+    # We filter by full_path starting with the prefix (e.g., 'docs-dir/' or '' for root)
+    prefix = directory_path.strip("/")
+    if prefix:
+        prefix += "/"
+
+    # Use the cache instead of hitting GCS
+    documents = [
+        doc_data for doc_path, doc_data in DOCUMENT_CACHE.items()
+        if doc_path.startswith(prefix)
+    ]
+
+    if not documents:
+        return {
+            "status": "ok",
+            "details": f"No cached documents found in directory '{directory_path}'.",
+            "matches": []
+        }
+
+    # Split query into separate words
+    words = [w.strip() for w in query.split() if w.strip()]
+    if not words:
+        return {"status": "ok", "details": "Empty query", "matches": []}
+
+    results = []
+    debug_str =""
+    # 2. Perform search on cached content (rest of the logic is fast)
+    for doc in documents:
+        debug_str = doc['full_path']
+        matched_items = []
+        matched_items_html = []
+
+        # --- Search runs directly on the cached 'content' string ---
+        content = doc.get("content", "")
+
+        if show_mode == "line":
+            lines = content.split("\n")
+
+            for line in lines:
+                if match_line(line, words, mode=mode, match_type=match_type):
+                    matched_items.append(line)
+                    matched_items_html.append(
+                        highlight_matches_html(line, words, match_type=match_type)
+                    )
+
+        else:  # paragraph mode
+            paragraphs = split_into_paragraphs(content)
+            for paragraph in paragraphs:
+                if match_line(paragraph, words, mode=mode, match_type=match_type):
+                    matched_items.append(paragraph)
+                    matched_items_html.append(
+                        highlight_matches_html(paragraph, words, match_type=match_type)
+                    )
+
+        # NOTE: match_positions (page/line) logic is complex without pages data in the cache.
+        # For simple search, we will skip or simplify it here, focusing on speed.
+
+        if matched_items:
+            results.append({
+                "file": os.path.basename(doc["full_path"]),  # Use base name for file display
+                "full_path": doc["full_path"],
+                "matches": matched_items,
+                "matches_html": matched_items_html,
+                "match_positions": []  # Simplified for speed/caching
+            })
+            debug_str += "match"
+        else:
+            debug_str += "no match"
+    return {
+        "debug": debug_str,
+        "status": "ok",
+        "query": query,
+        "directory_path": directory_path,
+        "mode": mode,
+        "match_type": match_type,
+        "show_mode": show_mode,
+        "matches": results
+    }
 
 def simple_keyword_search(query: str,
                           directory_path: str = "",
@@ -773,7 +1116,6 @@ app = Flask(__name__)
 
 
 
-
 @app.route('/simple_search', methods=['POST'])
 def simple_search_endpoint():
     # --- TIMER 1: Client Initialization (Should be refactored) ---
@@ -792,6 +1134,18 @@ def simple_search_endpoint():
 
     query = data.get('query', '').strip()
     directory_path = data.get('directory_path', '').strip()
+
+    global DOCUMENT_CACHE
+    if not DOCUMENT_CACHE:
+        # This function (the slow ~20s part) only runs on the first request
+        print("LOG: Cache empty, performing deferred full document cache initialization on this request.")
+        initialize_document_cache("")
+
+        # 4. Check for cache success before proceeding
+    if not DOCUMENT_CACHE:
+        return jsonify({"error": "Cache is empty after attempted initialization. Check GCS permissions/logs."}), 500
+
+
     config = data.get("search_config", {})
 
     mode = config.get("word_logic", "any")
@@ -804,7 +1158,7 @@ def simple_search_endpoint():
     try:
 
 
-        result = simple_keyword_search(
+        result = simple_keyword_search2(
             query,
             directory_path,
             mode=mode,
