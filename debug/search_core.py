@@ -10,16 +10,19 @@ from google import genai
 from google.genai import errors
 from flask import Flask, request, jsonify
 #import  pdfplumber
+from pdfminer.high_level import extract_text_to_fp
 from docx import Document
 from pypdf import PdfReader
 from typing import List
 
-from document_parsers import extract_content3, extract_docx_with_lines, find_all_word_positions_in_pdf, split_into_paragraphs, match_line, highlight_matches_html, find_paragraph_position_in_pages
+from document_parsers import extract_content3
 # ... existing configurations ...
 
 # NEW: Required for Vision API Asynchronous PDF OCR output
 
 MAX_CHARS_PER_DOC = 100000
+
+import os
 
 
 
@@ -34,6 +37,78 @@ gcs_bucket = None     # <-- NEW: Store the GCS Bucket object once
 
 
 
+def extract_docx_with_lines(file_content_bytes: bytes):
+    """
+    Given DOCX bytes, return:
+        [
+            {"page": 1, "lines": [...]}
+        ]
+
+    Note: DOCX files do not contain real pagination, so the whole document
+    is treated as page 1.
+    """
+    try:
+        doc_stream = io.BytesIO(file_content_bytes)
+        document = Document(doc_stream)
+    except Exception as e:
+        return f"ERROR: Failed to read DOCX: {e}"
+
+    lines = []
+
+    for para in document.paragraphs:
+        text = para.text.strip()
+        if text:
+            # Keep a clean version
+            lines.append(text)
+
+    # If we want to capture empty paragraphs as blank lines:
+    # for para in document.paragraphs:
+    #     lines.append(para.text)
+
+    # Since DOCX has no real pages, return everything as page 1
+    return [
+        {
+            "page": 1,
+            "lines": lines
+        }
+    ]
+
+def find_all_word_positions_in_pdf(file_content_bytes: bytes, query: str):
+    """
+    Return a list of all occurrences:
+    [
+        {"page": 4, "line": 13, "text": "...."},
+        ...
+    ]
+    """
+    query_lower = query.lower()
+    positions = []
+
+    pdf_stream = io.BytesIO(file_content_bytes)
+    try:
+        reader = PdfReader(pdf_stream)
+    except Exception as e:
+        print(f"ERROR: Failed to read PDF: {e}")
+        return positions
+
+    for page_index, page in enumerate(reader.pages, start=1):
+        try:
+            text = page.extract_text() or ""
+        except Exception as e:
+            print(f"⚠️ Failed to extract text from page {page_index}: {e}")
+            continue
+
+        lines = text.splitlines()
+
+        for line_index, line in enumerate(lines, start=1):
+            if query_lower in line.lower():
+                positions.append({
+                    "page": page_index,
+                    "line": line_index
+                    #"text": line,
+                })
+
+    return positions
 
 def get_storage_client():
     """Initializes and returns the Google Cloud Storage client."""
@@ -408,6 +483,182 @@ def get_gcs_files_context(directory_path, bucket_name,query=""):
 
 
 
+def split_into_paragraphs2(text: str, paragraph_mode) -> List[str]:
+    """
+    Splits text into paragraphs. If the text appears as one block (i.e., few lines
+    from the parser), it intelligently attempts to split by sentence endings
+    (period, question mark, exclamation mark) to simulate paragraphs.
+
+    If the text has many line breaks, it defaults to splitting based on blank lines.
+    """
+
+    # 1. Standard Split (relies on parser-provided \n or blank lines)
+    lines = text.split("\n")
+
+    # Heuristic: If we have very few actual line breaks, the parser likely failed
+    # to recognize them and returned a giant text block.
+    if len(lines) < 10 and len(text) > 500:
+
+        # 2. Advanced Sentence Split (Fallback for "stuck" text)
+
+        # Define sentence termination patterns (., ?, !) followed by space or end of string
+        # This regex splits while keeping the punctuation at the end of the sentence
+        sentences = re.split(r'([.?!])\s*(?=[A-Zא-ת]|$)', text.strip())
+
+        paragraphs = []
+        current_paragraph = ""
+        sentence_count = 0
+
+        for part in sentences:
+            if not part.strip():
+                continue
+
+            # The regex sometimes splits into content and the punctuation mark itself.
+            if part in ['.', '?', '!']:
+                current_paragraph += part
+                if len(current_paragraph.split()) > 5:  # Require at least 5 words for a paragraph segment
+                    paragraphs.append(current_paragraph.strip())
+                    current_paragraph = ""
+                    sentence_count = 0
+                continue
+
+            # If the current paragraph is getting long, start a new one
+            if sentence_count >= 3:
+                if current_paragraph:
+                    paragraphs.append(current_paragraph.strip())
+                current_paragraph = part.strip()
+                sentence_count = 1
+            else:
+                current_paragraph += (" " + part.strip())
+                sentence_count += 1
+
+        # Add the final remaining paragraph segment
+        if current_paragraph:
+            paragraphs.append(current_paragraph.strip())
+
+        # If the advanced split created significantly more logical units, use it.
+        if len(paragraphs) > 1:
+            return paragraphs
+
+    # 3. Default Robust Split (Groups lines separated by blank space)
+    paragraphs = []
+    current = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            if current:
+                paragraphs.append(" ".join(current))
+                current = []
+            continue
+        current.append(stripped)
+    if current:
+        paragraphs.append(" ".join(current))
+
+    return paragraphs
+
+def split_into_paragraphs(text: str):
+    paragraphs = []
+    current = []
+
+    for line in text.split("\n"):
+        stripped = line.strip()
+
+        if not stripped:
+            # real blank line → paragraph break
+            if current:
+                paragraphs.append("\n".join(current))
+                current = []
+            continue
+
+        current.append(stripped)
+
+        # Detect paragraph boundary:
+        # Ends with punctuation OR next line likely new paragraph.
+        if stripped.endswith((".", "!", "?", ":")):
+            # Commit current paragraph
+            paragraphs.append("\n".join(current))
+            current = []
+
+    # Final paragraph
+    if current:
+        paragraphs.append("\n".join(current))
+
+    return paragraphs
+
+
+def match_line(line: str, words: list[str], mode="any", match_type="partial"):
+    """
+    line        = the text line from the document
+    words       = user search words (already split)
+    mode        = "any" or "all"
+    match_type  = "partial" or "full"
+
+    Returns True if the line matches the search rule.
+    """
+
+    line_lower = line.lower()
+
+    # full match = whole word
+    if match_type == "full":
+        def check_word(word):
+            return re.search(rf"\b{re.escape(word.lower())}\b", line_lower)
+
+    # partial match = substring
+    else:
+        def check_word(word):
+            return word.lower() in line_lower
+
+    if mode == "all":
+        return all(check_word(w) for w in words)
+
+    return any(check_word(w) for w in words)
+
+
+def highlight_matches_html(text: str, words: list[str], match_type: str = "partial"):
+    """
+    Wrap matching words in <span> so they render highlighted in HTML.
+    match_type: 'partial' or 'full'
+    """
+    if not words:
+        return text
+
+    # Build regex based on match type
+    if match_type == "full":
+        # whole word match
+        pattern = r"\b(" + "|".join(re.escape(w) for w in words) + r")\b"
+    else:
+        # partial / substring match
+        pattern = r"(" + "|".join(re.escape(w) for w in words) + r")"
+
+    regex = re.compile(pattern, re.IGNORECASE)
+
+    def repl(m):
+        return f"<span style='background-color: blue; font-weight:bold;'>{m.group(0)}</span>"
+
+    return regex.sub(repl, text)
+
+
+def extract_pdf_local(blob_bytes: bytes) -> str:
+    """
+    Extracts text from a PDF blob using the pdfminer.six library.
+    This is a synchronous, fast, local operation.
+    """
+    try:
+        # Use a BytesIO buffer to treat the bytes as a file
+        pdf_file = io.BytesIO(blob_bytes)
+
+        # pdfminer.six extraction
+        output_string = io.StringIO()
+        extract_text_to_fp(pdf_file, output_string)
+
+        return output_string.getvalue().strip()
+
+
+    except Exception as e:
+        print(f"ERROR: Failed to extract text from PDF locally: {e}")
+        traceback.print_exc()
+        return "ERROR: PDF extraction failed."
+
 
 
 def initialize_document_cache(directory_path: str):
@@ -675,6 +926,36 @@ def simple_keyword_search(query: str,
         "matches": results
     }
 
+def find_paragraph_position_in_pages(paragraph_text: str, pages):
+    """
+    Try to find the (page, line) where this paragraph starts,
+    by matching its first non-empty line inside pages.
+    """
+    if not pages:
+        return 1, 1
+
+    # Take the first non-empty line from the paragraph
+    first_line = None
+    for raw_line in paragraph_text.split("\n"):
+        s = raw_line.strip()
+        if s:
+            first_line = s
+            break
+
+    if not first_line:
+        return 1, 1
+
+    first_line_lower = first_line.lower()
+
+    for page_entry in pages:
+        page_num = page_entry.get("page", 1)
+        lines = page_entry.get("lines", []) or []
+        for line_idx, doc_line in enumerate(lines, start=1):
+            if doc_line and first_line_lower in doc_line.lower():
+                return page_num, line_idx
+
+    # Fallback if not found
+    return 1, 1
 
 def perform_search(query: str, directory_path: str = ""):
     """Performs the RAG search using the globally initialized clients with multi-model fallback."""

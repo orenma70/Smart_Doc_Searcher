@@ -10,16 +10,20 @@ from google import genai
 from google.genai import errors
 from flask import Flask, request, jsonify
 #import  pdfplumber
+from pdfminer.high_level import extract_text_to_fp
 from docx import Document
 from pypdf import PdfReader
 from typing import List
 
-from document_parsers import extract_content3, extract_docx_with_lines, find_all_word_positions_in_pdf, split_into_paragraphs, match_line, highlight_matches_html, find_paragraph_position_in_pages
+from search_utilities import split_into_paragraphs, match_line, highlight_matches_html, get_gcs_files_context, extract_content3
+
 # ... existing configurations ...
 
 # NEW: Required for Vision API Asynchronous PDF OCR output
 
 MAX_CHARS_PER_DOC = 100000
+
+import os
 
 
 
@@ -31,7 +35,6 @@ GCS_OCR_OUTPUT_PATH = "gs://" + BUCKET_NAME + "/vision_ocr_output/"
 
 DOCUMENT_CACHE = {} # <-- NEW: This will store extracted text to prevent re-downloading
 gcs_bucket = None     # <-- NEW: Store the GCS Bucket object once
-
 
 
 
@@ -277,131 +280,87 @@ def extract_content(blob_bytes, blob_name, full_gcs_path):
         return f"ERROR: Could not decode text content for {blob_name}. {e}"
 
 
-def get_gcs_files_context(directory_path, bucket_name,query=""):
-    """Fetches, downloads, processes, and limits content from GCS."""
 
-    if storage_client is None:
-        print("⚠️ Storage client is not initialized.")
-        return []
 
-    # Normalize directory_path (allow root if empty)
-    directory_path = (directory_path or "").strip("/")
 
-    print(f"🔍 Fetching files from gs://{bucket_name}/{directory_path}/")
 
-    SUPPORTED_EXTENSIONS = ('.docx', '.pdf', '.txt')
-    prefix = f"{directory_path}/" if directory_path else ""
-    file_data = []
 
-    try:
-        bucket = storage_client.bucket(bucket_name)
 
-        blobs = bucket.list_blobs(prefix=prefix)
+def split_into_paragraphs2(text: str, paragraph_mode) -> List[str]:
+    """
+    Splits text into paragraphs. If the text appears as one block (i.e., few lines
+    from the parser), it intelligently attempts to split by sentence endings
+    (period, question mark, exclamation mark) to simulate paragraphs.
 
-        for blob in blobs:
-            blob_name_lower = blob.name.lower()
+    If the text has many line breaks, it defaults to splitting based on blank lines.
+    """
 
-            # Skip the "folder" itself, empty files, and unsupported extensions
-            if (
-                blob.name == prefix
-                or blob.size == 0
-                or not blob_name_lower.endswith(SUPPORTED_EXTENSIONS)
-            ):
+    # 1. Standard Split (relies on parser-provided \n or blank lines)
+    lines = text.split("\n")
+
+    # Heuristic: If we have very few actual line breaks, the parser likely failed
+    # to recognize them and returned a giant text block.
+    if len(lines) < 10 and len(text) > 500:
+
+        # 2. Advanced Sentence Split (Fallback for "stuck" text)
+
+        # Define sentence termination patterns (., ?, !) followed by space or end of string
+        # This regex splits while keeping the punctuation at the end of the sentence
+        sentences = re.split(r'([.?!])\s*(?=[A-Zא-ת]|$)', text.strip())
+
+        paragraphs = []
+        current_paragraph = ""
+        sentence_count = 0
+
+        for part in sentences:
+            if not part.strip():
                 continue
 
-            try:
-                full_gcs_path = blob.name
-
-                # Download bytes for DOCX/PDF/TXT and let extract_content handle details
-                file_content_bytes = blob.download_as_bytes()
-                content_string = extract_content(file_content_bytes, blob.name, full_gcs_path)
-                # Check for errors before processing
-                if isinstance(content_string, str) and content_string.startswith("ERROR:"):
-                    print(f"⚠️ Skipping file {blob.name} due to extraction error.")
-                    continue
-
-                if not content_string:
-                    # nothing extracted – skip file
-                    continue
-
-                # Truncate content if too long (this is the SAME logic as before)
-                if len(content_string) > MAX_CHARS_PER_DOC:
-                    print(f"⚠️ Truncating file {blob.name} to {MAX_CHARS_PER_DOC} chars.")
-                    content_string = content_string[:MAX_CHARS_PER_DOC]
-
-                # 1. Relative name (nice for UI and Gemini “File: …”)
-                if prefix and blob.name.startswith(prefix):
-                    relative_name = blob.name[len(prefix):]  # e.g. "file.pdf" or "sub/file.pdf"
-                else:
-                    relative_name = blob.name
-
-                # 2. Pages structure for page+line info (NEW), but safe:
-                #    if extractors fail, just fall back to a single-page view of content.
-                pages = []
-
-                try:
-                    if blob_name_lower.endswith('.pdf'):
-                        # Expected: [{"page": 1, "lines": [...]}, ...]
-                        pages = find_all_word_positions_in_pdf(file_content_bytes, query)
-                    elif blob_name_lower.endswith('.docx'):
-                        # Expected: [{"page": 1, "lines": [...]}, ...]
-                        pages = extract_docx_with_lines(file_content_bytes)
-
-                    else:
-                        # TXT: split content into lines as one page
-                        text = file_content_bytes.decode("utf-8", errors="ignore")
-                        pages = [
-                            {"page": 1, "lines": text.split("\n")}
-                        ]
-
-                except Exception as pe:
-                    print(f"⚠️ Page extraction failed for {blob.name}: {pe}")
-                    # Fallback: just one page with `content_string` split into lines
-                    pages = [
-                        {"page": 1, "lines": content_string.split("\n")}
-                    ]
-
-                    # Normalize pages: make sure it's always a list of {"page": int, "lines": list[str]}
-                if isinstance(pages, str):
-                    # extractor returned "ERROR: ..." or some text
-                    if pages.startswith("ERROR:"):
-                        print(f"⚠️ Page extractor error for {blob.name}: {pages}")
-                        pages = [
-                            {"page": 1, "lines": content_string.split("\n")}
-                        ]
-                    else:
-                        pages = [
-                            {"page": 1, "lines": pages.split("\n")}
-                        ]
-                elif not pages:
-                    # empty or None -> fallback to content_string
-                    pages = [
-                        {"page": 1, "lines": content_string.split("\n")}
-                    ]
-                elif isinstance(pages, list) and pages and isinstance(pages[0], str):
-                    # list of strings -> treat as lines of page 1
-                    pages = [
-                        {"page": 1, "lines": pages}
-                    ]
-                # Final append – this is what simple_keyword_search expects
-                file_data.append({
-                    "name": relative_name,     # was effectively blob.name before
-                    "full_path": blob.name,
-                    "content": content_string,  # SAME field your search uses
-                    "pages1": pages              # NEW, but extra only
-                })
-
-            except Exception as e:
-                print(f"Error processing {blob.name}: {e}")
+            # The regex sometimes splits into content and the punctuation mark itself.
+            if part in ['.', '?', '!']:
+                current_paragraph += part
+                if len(current_paragraph.split()) > 5:  # Require at least 5 words for a paragraph segment
+                    paragraphs.append(current_paragraph.strip())
+                    current_paragraph = ""
+                    sentence_count = 0
                 continue
 
+            # If the current paragraph is getting long, start a new one
+            if sentence_count >= 3:
+                if current_paragraph:
+                    paragraphs.append(current_paragraph.strip())
+                current_paragraph = part.strip()
+                sentence_count = 1
+            else:
+                current_paragraph += (" " + part.strip())
+                sentence_count += 1
 
-        print(f"✅ Found {len(file_data)} usable documents in directory '{directory_path}'.")
-        return file_data
+        # Add the final remaining paragraph segment
+        if current_paragraph:
+            paragraphs.append(current_paragraph.strip())
 
-    except Exception as e:
-        print(f"Error listing/downloading files from GCS: {e}")
-        return []
+        # If the advanced split created significantly more logical units, use it.
+        if len(paragraphs) > 1:
+            return paragraphs
+
+    # 3. Default Robust Split (Groups lines separated by blank space)
+    paragraphs = []
+    current = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            if current:
+                paragraphs.append(" ".join(current))
+                current = []
+            continue
+        current.append(stripped)
+    if current:
+        paragraphs.append(" ".join(current))
+
+    return paragraphs
+
+
+
 
 
 
@@ -675,6 +634,36 @@ def simple_keyword_search(query: str,
         "matches": results
     }
 
+def find_paragraph_position_in_pages(paragraph_text: str, pages):
+    """
+    Try to find the (page, line) where this paragraph starts,
+    by matching its first non-empty line inside pages.
+    """
+    if not pages:
+        return 1, 1
+
+    # Take the first non-empty line from the paragraph
+    first_line = None
+    for raw_line in paragraph_text.split("\n"):
+        s = raw_line.strip()
+        if s:
+            first_line = s
+            break
+
+    if not first_line:
+        return 1, 1
+
+    first_line_lower = first_line.lower()
+
+    for page_entry in pages:
+        page_num = page_entry.get("page", 1)
+        lines = page_entry.get("lines", []) or []
+        for line_idx, doc_line in enumerate(lines, start=1):
+            if doc_line and first_line_lower in doc_line.lower():
+                return page_num, line_idx
+
+    # Fallback if not found
+    return 1, 1
 
 def perform_search(query: str, directory_path: str = ""):
     """Performs the RAG search using the globally initialized clients with multi-model fallback."""

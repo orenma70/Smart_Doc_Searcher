@@ -1,0 +1,7 @@
+# ... (משתנים אחרים כמו BUCKET_NAME)
+BUCKET_NAME=oren-smart-search-docs-1205
+
+
+# כתובות ה-API של Cloud Run
+API_search_url=https://smart-doc-searcher-api-v2-359127107055.us-central1.run.app/search
+API_simple_search_url=https://smart-doc-searcher-api-v2-359127107055.us-central1.run.app/simple_search

@@ -16,9 +16,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY setup.txt .
 COPY search_core.py .
 COPY config_reader.py .
-COPY document_parsers.py .
 COPY search_utilities.py .
-
+#COPY document_parsers.py .
 
 
 # 5. Start Gunicorn (Points to app_core:app)
