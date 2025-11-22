@@ -415,61 +415,61 @@ def get_gcs_files_context(directory_path, bucket_name,query=""):
 def initialize_document_cache(directory_path: str):
     """
     Builds the document cache by listing, downloading, and extracting content
-    from GCS. This runs ONCE in the request context.
+    from GCS. This runs ONCE in the background thread.
     """
-    global DOCUMENT_CACHE, gcs_bucket
-
-    if DOCUMENT_CACHE: return
+    global DOCUMENT_CACHE, gcs_bucket, CACHE_STATUS, cache_lock
 
     if gcs_bucket is None:
-        print("FATAL: gcs_bucket is NULL. Cannot proceed with list_blobs.")
+        with cache_lock:
+            CACHE_STATUS = "FAILED"
+            print("CACHE-INIT: Failed to run because gcs_bucket is None.")
         return
 
-    print(f"INFO: Starting document cache initialization (Expected delay: ~20s)...")
+    print(f"CACHE-INIT: Starting background cache process for prefix: {directory_path}...")
     cache_start_time = time.time()
     temp_cache = {}
 
     try:
-        # 1. Setup prefix
         prefix = directory_path.strip("/")
         if prefix: prefix += "/"
 
-        # 2. List all blobs
+        # This list_blobs call is a common place for the thread to crash
         blobs = gcs_bucket.list_blobs(prefix=prefix)
 
-        # NOTE: You MUST ensure your extract_content function is updated
-        # to use the new global client variables (vision_client, storage_client)
-        # and to return just the extracted text string.
-
         for blob in blobs:
-            # (Your existing file filtering and processing logic goes here)
-            # ...
-            # 3. Inside the loop, you will call:
+            # We keep the file-level error handling to prevent the loop from aborting
             try:
-                print(f"LOG: Processing {blob.name}...")
-                # 2. The Background Thread downloads the bytes:
+                if blob.size == 0 or blob.name.endswith('/'): continue
+
                 blob_bytes = blob.download_as_bytes()
-                extracted_text = extract_content3(blob_bytes, blob.name)  # Call your existing extractor
+                # Assuming extract_content3 is robust enough for your file types
+                extracted_text = extract_content3(blob_bytes, blob.name)
 
                 if extracted_text and not extracted_text.startswith("ERROR:"):
-                    # 4. Save to the cache using the full path as the key
                     temp_cache[blob.name] = {
                         "filename": os.path.basename(blob.name),
                         "full_path": blob.name,
-                        "content": extracted_text,  # The actual text content
+                        "content": extracted_text,
                     }
-                # ... (error handling)
-            except Exception as dl_e:
-                print(f"❌ ERROR downloading or processing {blob.name}: {dl_e}")
-                traceback.print_exc()
 
-        DOCUMENT_CACHE = temp_cache
-        cache_time = round(time.time() - cache_start_time, 2)
-        print(f"SUCCESS: Cache populated with {len(DOCUMENT_CACHE)} files in {cache_time} seconds.")
+            except Exception as dl_e:
+                # Log the error and move to the next file
+                print(f"❌ ERROR processing file {blob.name}: {dl_e}")
+
+        # --- CRITICAL SUCCESS BLOCK ---
+        with cache_lock:
+            DOCUMENT_CACHE = temp_cache
+            # Set to READY even if empty, to ensure the state machine moves forward
+            CACHE_STATUS = "READY"
+            cache_time = round(time.time() - cache_start_time, 2)
+            print(f"CACHE-INIT: SUCCESS. Status: READY with {len(temp_cache)} files in {cache_time}s.")
 
     except Exception as e:
-        print(f"ERROR during cache initialization (List or Download phase): {e}")
+        # --- CRITICAL FAILURE BLOCK ---
+        print(f"CACHE-INIT: CATASTROPHIC ERROR (Bucket list failed): {e}")
         traceback.print_exc()
+        with cache_lock:
+            CACHE_STATUS = "FAILED"
 
 
 def simple_keyword_search2(query: str,
@@ -765,68 +765,62 @@ def start_cache_thread(directory_path: str):
     """
     Starts the background thread responsible for populating the cache ONLY IF
     it is not already running or finished successfully.
-
-    This function uses the global CACHE_STATUS and cache_lock to ensure the
-    caching process runs only once.
     """
     global cache_thread, CACHE_STATUS
 
     with cache_lock:
-        # Check if the cache is in a state that requires starting (PENDING, FAILED, EMPTY_SUCCESS)
-        # and ensure no thread is currently alive.
-        if CACHE_STATUS in ["PENDING", "FAILED", "EMPTY_SUCCESS"] and (
-                cache_thread is None or not cache_thread.is_alive()):
+        print(f"START-CACHE: Lock acquired. Current Status: {CACHE_STATUS}. Thread Alive: {cache_thread and cache_thread.is_alive()}")
+
+        # Check if the existing thread is dead (stale)
+        is_thread_stale = cache_thread and not cache_thread.is_alive()
+
+        # Condition to start the thread:
+        # 1. Status is an initial/failure state (PENDING, FAILED, EMPTY_SUCCESS)
+        # 2. OR the thread is stale AND the status is stuck on WARMING_UP (retry needed)
+        if CACHE_STATUS in ["PENDING", "FAILED", "EMPTY_SUCCESS"] or (is_thread_stale and CACHE_STATUS == "WARMING_UP"):
+
+            if is_thread_stale and CACHE_STATUS != "READY":
+                print("START-CACHE: Previous thread finished with non-READY status or stalled. Retrying initialization.")
+
             CACHE_STATUS = "WARMING_UP"
-            print(f"LOG: Starting background thread for cache warm-up on prefix: {directory_path}")
+            print(f"START-CACHE: Setting Status to WARMING_UP and launching thread...")
 
-            # Prepare the prefix for GCS listing
-            prefix = directory_path.strip("/") + "/" if directory_path else ""
-
+            # Directory path is currently ignored in initialize_document_cache as per your setup, but kept for future proofing.
             cache_thread = threading.Thread(
                 target=initialize_document_cache,
-                args=("",),
+                args=(directory_path,),
                 daemon=True
             )
             cache_thread.start()
+            print("START-CACHE: Thread launched successfully.")
             return True
         else:
-            print(f"LOG: Cache thread already running or status is {CACHE_STATUS}. Skipping start.")
+            print(f"START-CACHE: Cache thread already running or ready (Status: {CACHE_STATUS}). Skipping launch.")
             return False
 # --- Flask Application Setup ---
 
 app = Flask(__name__)
 
 initialize_all_clients()
+timer0 = time.time()
 
 
-#start_cache_thread("")
 
 
 @app.route('/simple_search', methods=['POST'])
 
 
 def simple_search_endpoint():
-
+    # 1. Ensure the cache thread is started non-blocking (if needed)
     start_cache_thread("")
-    # --- TIMER 1: Client Initialization (Should be refactored) ---
+
     timer1 = time.time()
-    time_stamp = " "
-
-    # NOTE: Calling this on every request adds overhead. If this takes 14s,
-    # it must be moved out of the request handler.
-#    if not initialize_all_clients():
-#       print("ERROR: Service initialization failed.")
-#        return jsonify({"error": "Service initialization failed. Check BUCKET / GEMINI / VISION settings."}), 500
-
+    time_stamp = ""
 
     # --- Setup and Validation ---
     data = request.get_json(silent=True) or {}
-
     query = data.get('query', '').strip()
     directory_path = data.get('directory_path', '').strip()
-
-
-
     config = data.get("search_config", {})
 
     mode = config.get("word_logic", "any")
@@ -835,10 +829,21 @@ def simple_search_endpoint():
 
     if not query or not directory_path:
         return jsonify({"error": "Missing 'query' or 'directory_path' in request."}), 400
-    global DOCUMENT_CACHE, CACHE_STATUS
 
-    if not DOCUMENT_CACHE:
-        if CACHE_STATUS in ["PENDING", "FAILED", "EMPTY_SUCCESS", "WARMING_UP"]: #and ( cache_thread is None or not cache_thread.is_alive()):
+    global CACHE_STATUS
+
+    # 2. Acquire status safely to decide the path
+    with cache_lock:
+        current_status = CACHE_STATUS
+        cache_is_ready = current_status in ["READY", "EMPTY_SUCCESS"]
+
+    # 3. Decision Tree: Fallback (Slow) or Cache (Fast)?
+
+    if not cache_is_ready:
+
+        # --- SLOW FALLBACK PATH (Synchronous GCS Call) ---
+        print(f"LOG: Cache Status: '{current_status}'. Executing slow GCS search.")
+        try:
             result = simple_keyword_search(
                 query,
                 directory_path,
@@ -847,60 +852,42 @@ def simple_search_endpoint():
                 show_mode=show_mode
             )
 
-            time_stamp += f"simple_search_endpoint={round(100 * (time.time() - timer1)) / 100},"
-            time_stamp += "FIRST"
+            time_stamp += f"{round(100 * (time.time() - timer0)) / 100} sec "
+            time_stamp += f" new simple_keyword_search={round(100 * (time.time() - timer1)) / 100},"
+            time_stamp += CACHE_STATUS
             result["debug"] += time_stamp
             return jsonify(result), 200
-        else:
-            # This function (the slow ~20s part) only runs on the first request
-            print("LOG: Cache empty, performing deferred full document cache initialization on this request.")
-            #initialize_document_cache("")
-            cache_thread = threading.Thread(
-                target=initialize_document_cache,
-                args=("",)
+
+        except Exception as e:
+            print(f"ERROR in simple_keyword_search fallback: {e}")
+            traceback.print_exc()
+            return jsonify({"error": f"Fallback search failed: {str(e)}"}), 500
+
+    else:
+        # --- FAST CACHED PATH (In-memory Call) ---
+        print(f"LOG: Cache Status: '{current_status}'. Executing fast cached search.")
+        try:
+            result = simple_keyword_search2(
+                query,
+                directory_path,
+                mode=mode,
+                match_type=match_type,
+                show_mode=show_mode
             )
-            CACHE_STATUS = "WARMING_UP"
-            cache_thread.start()
-            #cache_thread.join()
-            # 4. Check for cache success before proceeding
-    if not DOCUMENT_CACHE and CACHE_STATUS != "WARMING_UP":
-        return jsonify({"error": "Cache is empty after attempted initialization. Check GCS permissions/logs."}), 500
 
-    if  DOCUMENT_CACHE:
-        CACHE_STATUS = "READY"
+            time_stamp += f"{round(100 * (time.time() - timer0)) / 100} sec "
+            time_stamp += f" new simple_keyword_search={round(100 * (time.time() - timer1)) / 100},"
+            time_stamp += CACHE_STATUS
+            result["debug"] += time_stamp
 
-    try:
+            return jsonify(result), 200
 
-        # cache mode
-        #if CACHE_STATUS == "READY" and DOCUMENT_CACHE:
-        result = simple_keyword_search2(
-            query,
-            directory_path,
-            mode=mode,
-            match_type=match_type,
-            show_mode=show_mode
-        )
-        #else
-        '''
-        # non cache mode
-        result = simple_keyword_search(
-            query,
-            directory_path,
-            mode=mode,
-            match_type=match_type,
-            show_mode=show_mode
-        )
-        '''
+        except Exception as e:
+            print(f"ERROR in simple_search_endpoint (cached search): {e}")
+            traceback.print_exc()
+            return jsonify({"error": f"Cached search failed: {str(e)}"}), 500
 
-        time_stamp += f"simple_search_endpoint={round(100 * (time.time() - timer1))/100},"
-        time_stamp += CACHE_STATUS
-        result["debug"] += time_stamp
-        return jsonify(result), 200
 
-    except Exception as e:
-        print(f"ERROR in simple_search_endpoint: {e}")
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
 
 @app.route('/search', methods=['POST'])
 def search_endpoint():

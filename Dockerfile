@@ -17,7 +17,7 @@ COPY setup.txt .
 COPY search_core.py .
 COPY config_reader.py .
 COPY document_parsers.py .
-COPY search_utilities.py .
+#COPY search_utilities.py .
 
 
 
