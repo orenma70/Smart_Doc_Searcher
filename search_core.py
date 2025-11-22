@@ -13,6 +13,8 @@ from flask import Flask, request, jsonify
 from docx import Document
 from pypdf import PdfReader
 from typing import List
+import threading
+
 
 from document_parsers import extract_content3, extract_docx_with_lines, find_all_word_positions_in_pdf, split_into_paragraphs, match_line, highlight_matches_html, find_paragraph_position_in_pages
 # ... existing configurations ...
@@ -32,7 +34,13 @@ GCS_OCR_OUTPUT_PATH = "gs://" + BUCKET_NAME + "/vision_ocr_output/"
 DOCUMENT_CACHE = {} # <-- NEW: This will store extracted text to prevent re-downloading
 gcs_bucket = None     # <-- NEW: Store the GCS Bucket object once
 
+# --- Global Shared State ---
 
+# 3. CACHE_STATUS: Flag to track the readiness of the cache.
+# Possible values: "PENDING", "READY", "FAILED".
+CACHE_STATUS = "PENDING"  # To track the state
+cache_lock = threading.Lock() # To safely manage global state updates
+cache_thread: threading.Thread | None = None # To hold the background thread instance
 
 
 def get_storage_client():
@@ -404,12 +412,6 @@ def get_gcs_files_context(directory_path, bucket_name,query=""):
         return []
 
 
-
-
-
-
-
-
 def initialize_document_cache(directory_path: str):
     """
     Builds the document cache by listing, downloading, and extracting content
@@ -444,6 +446,8 @@ def initialize_document_cache(directory_path: str):
             # ...
             # 3. Inside the loop, you will call:
             try:
+                print(f"LOG: Processing {blob.name}...")
+                # 2. The Background Thread downloads the bytes:
                 blob_bytes = blob.download_as_bytes()
                 extracted_text = extract_content3(blob_bytes, blob.name)  # Call your existing extractor
 
@@ -757,23 +761,62 @@ def perform_search(query: str, directory_path: str = ""):
     }
 
 
+def start_cache_thread(directory_path: str):
+    """
+    Starts the background thread responsible for populating the cache ONLY IF
+    it is not already running or finished successfully.
+
+    This function uses the global CACHE_STATUS and cache_lock to ensure the
+    caching process runs only once.
+    """
+    global cache_thread, CACHE_STATUS
+
+    with cache_lock:
+        # Check if the cache is in a state that requires starting (PENDING, FAILED, EMPTY_SUCCESS)
+        # and ensure no thread is currently alive.
+        if CACHE_STATUS in ["PENDING", "FAILED", "EMPTY_SUCCESS"] and (
+                cache_thread is None or not cache_thread.is_alive()):
+            CACHE_STATUS = "WARMING_UP"
+            print(f"LOG: Starting background thread for cache warm-up on prefix: {directory_path}")
+
+            # Prepare the prefix for GCS listing
+            prefix = directory_path.strip("/") + "/" if directory_path else ""
+
+            cache_thread = threading.Thread(
+                target=initialize_document_cache,
+                args=("",),
+                daemon=True
+            )
+            cache_thread.start()
+            return True
+        else:
+            print(f"LOG: Cache thread already running or status is {CACHE_STATUS}. Skipping start.")
+            return False
 # --- Flask Application Setup ---
 
 app = Flask(__name__)
 
+initialize_all_clients()
+
+
+#start_cache_thread("")
 
 
 @app.route('/simple_search', methods=['POST'])
+
+
 def simple_search_endpoint():
+
+    start_cache_thread("")
     # --- TIMER 1: Client Initialization (Should be refactored) ---
     timer1 = time.time()
     time_stamp = " "
 
     # NOTE: Calling this on every request adds overhead. If this takes 14s,
     # it must be moved out of the request handler.
-    if not initialize_all_clients():
-        print("ERROR: Service initialization failed.")
-        return jsonify({"error": "Service initialization failed. Check BUCKET / GEMINI / VISION settings."}), 500
+#    if not initialize_all_clients():
+#       print("ERROR: Service initialization failed.")
+#        return jsonify({"error": "Service initialization failed. Check BUCKET / GEMINI / VISION settings."}), 500
 
 
     # --- Setup and Validation ---
@@ -782,15 +825,6 @@ def simple_search_endpoint():
     query = data.get('query', '').strip()
     directory_path = data.get('directory_path', '').strip()
 
-    global DOCUMENT_CACHE
-    if not DOCUMENT_CACHE:
-        # This function (the slow ~20s part) only runs on the first request
-        print("LOG: Cache empty, performing deferred full document cache initialization on this request.")
-        initialize_document_cache("")
-
-        # 4. Check for cache success before proceeding
-    if not DOCUMENT_CACHE:
-        return jsonify({"error": "Cache is empty after attempted initialization. Check GCS permissions/logs."}), 500
 
 
     config = data.get("search_config", {})
@@ -801,10 +835,44 @@ def simple_search_endpoint():
 
     if not query or not directory_path:
         return jsonify({"error": "Missing 'query' or 'directory_path' in request."}), 400
+    global DOCUMENT_CACHE, CACHE_STATUS
+
+    if not DOCUMENT_CACHE:
+        if CACHE_STATUS in ["PENDING", "FAILED", "EMPTY_SUCCESS", "WARMING_UP"]: #and ( cache_thread is None or not cache_thread.is_alive()):
+            result = simple_keyword_search(
+                query,
+                directory_path,
+                mode=mode,
+                match_type=match_type,
+                show_mode=show_mode
+            )
+
+            time_stamp += f"simple_search_endpoint={round(100 * (time.time() - timer1)) / 100},"
+            time_stamp += "FIRST"
+            result["debug"] += time_stamp
+            return jsonify(result), 200
+        else:
+            # This function (the slow ~20s part) only runs on the first request
+            print("LOG: Cache empty, performing deferred full document cache initialization on this request.")
+            #initialize_document_cache("")
+            cache_thread = threading.Thread(
+                target=initialize_document_cache,
+                args=("",)
+            )
+            CACHE_STATUS = "WARMING_UP"
+            cache_thread.start()
+            #cache_thread.join()
+            # 4. Check for cache success before proceeding
+    if not DOCUMENT_CACHE and CACHE_STATUS != "WARMING_UP":
+        return jsonify({"error": "Cache is empty after attempted initialization. Check GCS permissions/logs."}), 500
+
+    if  DOCUMENT_CACHE:
+        CACHE_STATUS = "READY"
 
     try:
 
-
+        # cache mode
+        #if CACHE_STATUS == "READY" and DOCUMENT_CACHE:
         result = simple_keyword_search2(
             query,
             directory_path,
@@ -812,9 +880,20 @@ def simple_search_endpoint():
             match_type=match_type,
             show_mode=show_mode
         )
+        #else
+        '''
+        # non cache mode
+        result = simple_keyword_search(
+            query,
+            directory_path,
+            mode=mode,
+            match_type=match_type,
+            show_mode=show_mode
+        )
+        '''
 
         time_stamp += f"simple_search_endpoint={round(100 * (time.time() - timer1))/100},"
-
+        time_stamp += CACHE_STATUS
         result["debug"] += time_stamp
         return jsonify(result), 200
 

@@ -251,6 +251,7 @@ def extract_docx_with_lines2(blob_bytes: bytes) -> str:
 
 
 def extract_content3(blob_bytes, full_gcs_path):
+
     """
     RESTORED EXTRACTION LOGIC: Simplified for the Caching Architecture.
 
