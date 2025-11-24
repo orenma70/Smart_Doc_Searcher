@@ -1,0 +1,6 @@
+restore from version source from cloud
+
+C:\Users\orenm\Dropbox\my_doc\Python\Smart_Doc_Searcher>
+
+gcloud run revisions describe smart-doc-searcher-api-v2-00205-zvq --region us-central1 --format="value(containers[0].image)"
+gcloud run services  describe smart-doc-searcher-api-v2 --region us-central1 --format='value(status.smart-doc-searcher-api-v2-00205-zvq.containers[0].image)'

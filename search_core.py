@@ -680,7 +680,178 @@ def simple_keyword_search(query: str,
     }
 
 
+def get_filtered_context_from_cache(query: str, directory_path: str):
+    """
+    Performs chunking and keyword filtering on the DOCUMENT_CACHE to find the
+    most relevant, small context snippets for RAG.
+
+    Returns:
+        tuple: (document_context_string, list_of_sources)
+    """
+    global DOCUMENT_CACHE
+
+    all_chunks = []
+    prefix_to_match = directory_path.strip('/') + '/' if directory_path else ''
+
+    # a. Extract all relevant content and chunk it (using fixed size for efficiency)
+    CHUNK_SIZE = 500
+    for full_path, doc_data in DOCUMENT_CACHE.items():
+        # Ensure the file belongs to the current directory and has content
+        if full_path.startswith(prefix_to_match) and doc_data.get('content'):
+
+            content = doc_data['content']
+
+            # Fixed-size chunker for aggressive token reduction
+            for i in range(0, len(content), CHUNK_SIZE):
+                chunk_text = content[i:i + CHUNK_SIZE].strip()
+                if chunk_text:
+                    all_chunks.append({
+                        "text": chunk_text,
+                        "source": doc_data["filename"],
+                    })
+
+    # b. Simple keyword matching to find the most relevant chunks
+    relevant_chunks = []
+    query_keywords = set(query.lower().split())
+
+    for chunk in all_chunks:
+        # Check if any query word is present in the chunk
+        if any(keyword in chunk['text'].lower() for keyword in query_keywords):
+            relevant_chunks.append(chunk)
+
+    # Limit to the top X chunks (CRITICAL for speed)
+    MAX_RAG_CHUNKS = 10
+    top_chunks = relevant_chunks[:MAX_RAG_CHUNKS]
+
+    # c. Build the final, filtered context string and source list
+    document_context = ""
+    sources = set()
+
+    for chunk in top_chunks:
+        document_context += f"--- Source: {chunk['source']} ---\n{chunk['text']}\n\n"
+        sources.add(chunk['source'])
+
+    return document_context, list(sources)
+
 def perform_search(query: str, directory_path: str = ""):
+    """
+    Performs the RAG search, now using the cache and context filtering
+    to drastically improve speed.
+    """
+    global CACHE_STATUS, cache_lock
+    timer = time.time()  # Start timer
+
+    if not gemini_client:
+        return {"status": "Fallback", "details": "Gemini client not initialized. Check API Key."}
+
+    # 1. CHECK CACHE STATUS
+    with cache_lock:
+        cache_is_ready = CACHE_STATUS in ["READY", "EMPTY_SUCCESS"]
+
+    # 2. DOCUMENT RETRIEVAL (FAST CACHE PATH vs. SLOW FALLBACK)
+    if cache_is_ready:
+        # --- FAST PATH: Retrieve Context from Cache ---
+        search_mode = "CACHED & FILTERED"
+        print(f"RAG: Using {search_mode} context retrieval.")
+
+        # This calls the new function (defined previously)
+        document_context_data, sources_list = get_filtered_context_from_cache(query, directory_path)
+
+        # Check if the filter found anything relevant
+        if not document_context_data:
+            return {
+                "query": query,
+                "status": "Success",
+                "response": "המידע אינו נמצא במסמכים שסופקו.",  # Hebrew Fallback
+                "sources": [],
+                "debug": f"Search mode: {search_mode}. No relevant context found by keyword pre-filter. Time: {round(time.time() - timer, 2)}s."
+            }
+
+        final_prompt_context = document_context_data
+
+    else:
+        # --- SLOW FALLBACK PATH: Synchronous GCS/Vision call (Only if cache is failed/warming up) ---
+        print("RAG: Cache not ready/failed. Falling back to slow synchronous GCS call.")
+
+        # Retain your original slow document retrieval logic (which is now only used as fallback)
+        documents = get_gcs_files_context(directory_path, BUCKET_NAME, "")
+
+        if not documents:
+            return {"status": "Fallback",
+                    "details": f"No usable documents found in '{directory_path}'. All files may have failed content extraction."}
+
+        # Prepare Prompt using the full, unfiltered slow context
+        document_context = "\n\n--- DOCUMENTS CONTEXT (SLOW) ---\n\n"
+        for doc in documents:
+            document_context += f"File: {doc['name']}\nFull Path: {doc['full_path']}\nContent:\n{doc['content']}\n---\n"
+
+        final_prompt_context = document_context
+        sources_list = [doc['name'] for doc in documents]
+
+    # 3. Prepare Final Prompt for Gemini (Same as your old logic)
+    system_instruction = (
+        "You are a helpful assistant. Provide the answer in Hebrew (עברית). "
+        "Use ONLY the provided document text as context "
+        "to answer the question. If the information is not in the text, reply #$$$#"
+    )
+
+    final_prompt = (
+        f"DOCUMENT CONTEXT:\n---\n{final_prompt_context}\n---\n\n"
+        f"QUESTION: {query}"
+    )
+
+    # 4. Call Gemini API with Fallback Logic (Your working code)
+    try:
+        response = gemini_client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[final_prompt],
+            config={"system_instruction": system_instruction}
+        )
+        print("✅ Response received from gemini-2.5-flash.")
+
+    except errors.APIError as e:
+        if '503 UNAVAILABLE' not in str(e) and '500' not in str(e):
+            print(f"Non-503/500 Gemini API Error: {e}")
+            traceback.print_exc()
+            return {
+                "status": "API Error",
+                "details": f"Check your request or API configuration. Error: {e}"
+            }
+
+        # Attempt 2: gemini-2.5-pro (Fallback)
+        print("⚠️ gemini-2.5-flash overloaded. Falling back to gemini-2.5-pro...")
+        try:
+            response = gemini_client.models.generate_content(
+                model='gemini-2.5-pro',
+                contents=[final_prompt],
+                config={"system_instruction": system_instruction}
+            )
+            print("✅ Response received from gemini-2.5-pro (Fallback Success).")
+        except Exception as fallback_e:
+            print(f"❌ Fallback to gemini-2.5-pro failed: {fallback_e}")
+            traceback.print_exc()
+            return {
+                "status": "API Error",
+                "details": f"Both models are unavailable. Error: {fallback_e}"
+            }
+
+    except Exception as e:
+        print(f"Unhandled non-API error: {e}")
+        return {
+            "status": "API Error",
+            "details": f"An unknown error occurred: {e}"
+        }
+
+    # Success: Return the result
+    response_text = response.text.replace("#$$$#", "המידע אינו נמצא במסמכים שסופקו.")
+    return {
+        "query": query,
+        "status": "Success (RAG)",
+        "response": response_text,
+        "sources": sources_list,  # Use the list generated in Step 2
+        "debug": f"Search mode: {search_mode if cache_is_ready else 'SLOW FALLBACK'}. Total time: {round(time.time() - timer, 2)}s."
+    }
+def perform_search2(query: str, directory_path: str = ""):
     """Performs the RAG search using the globally initialized clients with multi-model fallback."""
     if not gemini_client:
         return {"status": "Fallback", "details": "Gemini client not initialized. Check API Key."}
@@ -801,10 +972,10 @@ def start_cache_thread(directory_path: str):
 
 app = Flask(__name__)
 
-initialize_all_clients()
+if not initialize_all_clients():
+    print("LOG: Request failed - Service initialization failed. Check server logs for IAM/API Key errors.")
+
 timer0 = time.time()
-
-
 
 
 @app.route('/simple_search', methods=['POST'])
@@ -855,7 +1026,12 @@ def simple_search_endpoint():
             time_stamp += f"{round(100 * (time.time() - timer0)) / 100} sec "
             time_stamp += f" new simple_keyword_search={round(100 * (time.time() - timer1)) / 100},"
             time_stamp += CACHE_STATUS
-            result["debug"] += time_stamp
+
+            if "debug" in result:
+                result["debug"] += time_stamp
+            else:
+                result["debug"] = time_stamp
+
             return jsonify(result), 200
 
         except Exception as e:
@@ -878,7 +1054,10 @@ def simple_search_endpoint():
             time_stamp += f"{round(100 * (time.time() - timer0)) / 100} sec "
             time_stamp += f" new simple_keyword_search={round(100 * (time.time() - timer1)) / 100},"
             time_stamp += CACHE_STATUS
-            result["debug"] += time_stamp
+            if "debug" in result:
+                result["debug"] += time_stamp
+            else:
+                result["debug"] = time_stamp
 
             return jsonify(result), 200
 
@@ -891,9 +1070,6 @@ def simple_search_endpoint():
 
 @app.route('/search', methods=['POST'])
 def search_endpoint():
-    if not initialize_all_clients():
-        print("LOG: Request failed - Service initialization failed. Check server logs for IAM/API Key errors.")
-        return jsonify({"error": "Service initialization failed. Check server logs for IAM/API Key errors."}), 500
 
     data = request.get_json(silent=True)
 

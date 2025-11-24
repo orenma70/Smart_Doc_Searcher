@@ -67,9 +67,6 @@ API_search_url=read_setup("API_search_url")
 API_simple_search_url=read_setup("API_simple_search_url")
 
 
-#API_search_url="https://smart-doc-searcher-api-v2-359127107055.us-central1.run.app/search"
-#API_simple_search_url="https://smart-doc-searcher-api-v2-359127107055.us-central1.run.app/simple_search"
-
 
 
 
