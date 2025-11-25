@@ -12,8 +12,26 @@ from flask import Flask, request, jsonify
 #import  pdfplumber
 from docx import Document
 from pypdf import PdfReader
-from typing import List
+from typing import List, Dict, Any, Tuple
 import threading
+
+from concurrent.futures import ThreadPoolExecutor
+
+
+
+# ==============================================================================
+# --- GLOBAL STATE FOR FALLBACK CACHING ---
+# ==============================================================================
+
+# Lock for thread-safe updates to the global fallback cache
+fallback_cache_lock = threading.Lock()
+
+# Stores the last directory_path that was successfully fetched from GCS
+LAST_FALLBACK_PATH: str = ""
+
+# Stores the GCS file context retrieved from get_gcs_files_context
+# Structure: List[Dict[str, Any]] (A list of document objects)
+GCS_FALLBACK_CACHE: List[Dict[str, Any]] = []
 
 
 from document_parsers import extract_content3, extract_docx_with_lines, find_all_word_positions_in_pdf, split_into_paragraphs, match_line, highlight_matches_html, find_paragraph_position_in_pages
@@ -285,132 +303,67 @@ def extract_content(blob_bytes, blob_name, full_gcs_path):
         return f"ERROR: Could not decode text content for {blob_name}. {e}"
 
 
-def get_gcs_files_context(directory_path, bucket_name,query=""):
-    """Fetches, downloads, processes, and limits content from GCS."""
+# Global limit for concurrency to prevent overwhelming the server/GCS
+MAX_CONCURRENT_DOWNLOADS = 10
 
-    if storage_client is None:
-        print("⚠️ Storage client is not initialized.")
-        return []
 
-    # Normalize directory_path (allow root if empty)
+def get_gcs_files_context(directory_path: str, bucket_name: str, query: str = "") -> List[Dict[str, Any]]:
+    """
+    Fetches, downloads, and processes content from GCS concurrently using a ThreadPoolExecutor.
+    This prevents the request from hitting a 504 Gateway Timeout on large directories.
+    """
     directory_path = (directory_path or "").strip("/")
-
-    print(f"🔍 Fetching files from gs://{bucket_name}/{directory_path}/")
-
-    SUPPORTED_EXTENSIONS = ('.docx', '.pdf', '.txt')
     prefix = f"{directory_path}/" if directory_path else ""
-    file_data = []
+    file_data: List[Dict[str, Any]] = []
 
+    # 1. Get the list of blobs (metadata only - this is fast)
     try:
         bucket = storage_client.bucket(bucket_name)
-
         blobs = bucket.list_blobs(prefix=prefix)
-
-        for blob in blobs:
-            blob_name_lower = blob.name.lower()
-
-            # Skip the "folder" itself, empty files, and unsupported extensions
-            if (
-                blob.name == prefix
-                or blob.size == 0
-                or not blob_name_lower.endswith(SUPPORTED_EXTENSIONS)
-            ):
-                continue
-
-            try:
-                full_gcs_path = blob.name
-
-                # Download bytes for DOCX/PDF/TXT and let extract_content handle details
-                file_content_bytes = blob.download_as_bytes()
-                content_string = extract_content(file_content_bytes, blob.name, full_gcs_path)
-                # Check for errors before processing
-                if isinstance(content_string, str) and content_string.startswith("ERROR:"):
-                    print(f"⚠️ Skipping file {blob.name} due to extraction error.")
-                    continue
-
-                if not content_string:
-                    # nothing extracted – skip file
-                    continue
-
-                # Truncate content if too long (this is the SAME logic as before)
-                if len(content_string) > MAX_CHARS_PER_DOC:
-                    print(f"⚠️ Truncating file {blob.name} to {MAX_CHARS_PER_DOC} chars.")
-                    content_string = content_string[:MAX_CHARS_PER_DOC]
-
-                # 1. Relative name (nice for UI and Gemini “File: …”)
-                if prefix and blob.name.startswith(prefix):
-                    relative_name = blob.name[len(prefix):]  # e.g. "file.pdf" or "sub/file.pdf"
-                else:
-                    relative_name = blob.name
-
-                # 2. Pages structure for page+line info (NEW), but safe:
-                #    if extractors fail, just fall back to a single-page view of content.
-                pages = []
-
-                try:
-                    if blob_name_lower.endswith('.pdf'):
-                        # Expected: [{"page": 1, "lines": [...]}, ...]
-                        pages = find_all_word_positions_in_pdf(file_content_bytes, query)
-                    elif blob_name_lower.endswith('.docx'):
-                        # Expected: [{"page": 1, "lines": [...]}, ...]
-                        pages = extract_docx_with_lines(file_content_bytes)
-
-                    else:
-                        # TXT: split content into lines as one page
-                        text = file_content_bytes.decode("utf-8", errors="ignore")
-                        pages = [
-                            {"page": 1, "lines": text.split("\n")}
-                        ]
-
-                except Exception as pe:
-                    print(f"⚠️ Page extraction failed for {blob.name}: {pe}")
-                    # Fallback: just one page with `content_string` split into lines
-                    pages = [
-                        {"page": 1, "lines": content_string.split("\n")}
-                    ]
-
-                    # Normalize pages: make sure it's always a list of {"page": int, "lines": list[str]}
-                if isinstance(pages, str):
-                    # extractor returned "ERROR: ..." or some text
-                    if pages.startswith("ERROR:"):
-                        print(f"⚠️ Page extractor error for {blob.name}: {pages}")
-                        pages = [
-                            {"page": 1, "lines": content_string.split("\n")}
-                        ]
-                    else:
-                        pages = [
-                            {"page": 1, "lines": pages.split("\n")}
-                        ]
-                elif not pages:
-                    # empty or None -> fallback to content_string
-                    pages = [
-                        {"page": 1, "lines": content_string.split("\n")}
-                    ]
-                elif isinstance(pages, list) and pages and isinstance(pages[0], str):
-                    # list of strings -> treat as lines of page 1
-                    pages = [
-                        {"page": 1, "lines": pages}
-                    ]
-                # Final append – this is what simple_keyword_search expects
-                file_data.append({
-                    "name": relative_name,     # was effectively blob.name before
-                    "full_path": blob.name,
-                    "content": content_string,  # SAME field your search uses
-                    "pages1": pages              # NEW, but extra only
-                })
-
-            except Exception as e:
-                print(f"Error processing {blob.name}: {e}")
-                continue
-
-
-        print(f"✅ Found {len(file_data)} usable documents in directory '{directory_path}'.")
-        return file_data
+        # Filter for relevant file types immediately
+        blobs_to_process = [
+            blob for blob in blobs
+            if blob.name.endswith(('.docx', '.pdf', '.txt'))
+        ]
 
     except Exception as e:
-        print(f"Error listing/downloading files from GCS: {e}")
+        print(f"ERROR: Failed to list GCS blobs: {e}")
         return []
 
+    def process_single_blob(blob):
+        """Worker function executed by each thread."""
+        try:
+            # NETWORK I/O: This is the slow part now happening in parallel
+            file_content_bytes = blob.download_as_bytes()
+            content_string = extract_content(file_content_bytes, blob.name, blob.name)
+
+            if content_string.startswith("ERROR:") or not content_string:
+                return None
+
+            # Determine relative name
+            relative_name = blob.name[len(prefix):] if prefix and blob.name.startswith(prefix) else blob.name
+
+            return {
+                "name": relative_name,
+                "full_path": blob.name,
+                "content": content_string[:MAX_CHARS_PER_DOC],  # Assuming MAX_CHARS_PER_DOC is global
+                # Pages structure is often too complex to compute concurrently,
+                # but adding a placeholder for consistency:
+                "pages": [{"page": 1, "lines": content_string.split("\n")}],
+            }
+        except Exception as e:
+            print(f"ERROR processing {blob.name}: {e}")
+            return None
+
+    # 2. Execute file processing concurrently
+    with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_DOWNLOADS) as executor:
+        # Map the worker function over the list of blobs
+        results = executor.map(process_single_blob, blobs_to_process)
+
+        # Collect results, filtering out None (failed/skipped files)
+        file_data = [res for res in results if res is not None]
+
+    return file_data
 
 def initialize_document_cache(directory_path: str):
     """
@@ -567,6 +520,178 @@ def simple_keyword_search2(query: str,
         "matches": results
     }
 
+
+
+
+# ==============================================================================
+# --- MOCK & PLACEHOLDER FUNCTIONS ---
+# NOTE: Replace these with your actual implementations
+# ==============================================================================
+
+
+
+def get_gcs_files_context44(directory_path: str, bucket_name: str, query: str = "") -> List[Dict[str, Any]]:
+    """Fetches, downloads, processes, and limits content from GCS."""
+
+    if storage_client is None:
+        print("⚠️ Storage client is not initialized.")
+        return []
+
+    # Normalize directory_path (allow root if empty)
+    directory_path = (directory_path or "").strip("/")
+
+    print(f"🔍 Fetching files from gs://{bucket_name}/{directory_path}/")
+
+    SUPPORTED_EXTENSIONS = ('.docx', '.pdf', '.txt')
+    prefix = f"{directory_path}/" if directory_path else ""
+    file_data = []
+
+    try:
+        bucket = storage_client.bucket(bucket_name)
+
+        blobs = bucket.list_blobs(prefix=prefix)
+
+        for blob in blobs:
+            blob_name_lower = blob.name.lower()
+
+            # Skip the "folder" itself, empty files, and unsupported extensions
+            if (
+                blob.name == prefix
+                or blob.size == 0
+                or not blob_name_lower.endswith(SUPPORTED_EXTENSIONS)
+            ):
+                continue
+
+            try:
+                full_gcs_path = blob.name
+
+                # Download bytes for DOCX/PDF/TXT and let extract_content handle details
+                file_content_bytes = blob.download_as_bytes()
+                content_string = extract_content(file_content_bytes, blob.name, full_gcs_path)
+                # Check for errors before processing
+                if isinstance(content_string, str) and content_string.startswith("ERROR:"):
+                    print(f"⚠️ Skipping file {blob.name} due to extraction error.")
+                    continue
+
+                if not content_string:
+                    # nothing extracted – skip file
+                    continue
+
+                # Truncate content if too long (this is the SAME logic as before)
+                if len(content_string) > MAX_CHARS_PER_DOC:
+                    print(f"⚠️ Truncating file {blob.name} to {MAX_CHARS_PER_DOC} chars.")
+                    content_string = content_string[:MAX_CHARS_PER_DOC]
+
+                # 1. Relative name (nice for UI and Gemini “File: …”)
+                if prefix and blob.name.startswith(prefix):
+                    relative_name = blob.name[len(prefix):]  # e.g. "file.pdf" or "sub/file.pdf"
+                else:
+                    relative_name = blob.name
+
+                # 2. Pages structure for page+line info (NEW), but safe:
+                #    if extractors fail, just fall back to a single-page view of content.
+                pages = []
+
+                try:
+                    if blob_name_lower.endswith('.pdf'):
+                        # Expected: [{"page": 1, "lines": [...]}, ...]
+                        pages = find_all_word_positions_in_pdf(file_content_bytes, query)
+                    elif blob_name_lower.endswith('.docx'):
+                        # Expected: [{"page": 1, "lines": [...]}, ...]
+                        pages = extract_docx_with_lines(file_content_bytes)
+
+                    else:
+                        # TXT: split content into lines as one page
+                        text = file_content_bytes.decode("utf-8", errors="ignore")
+                        pages = [
+                            {"page": 1, "lines": text.split("\n")}
+                        ]
+
+                except Exception as pe:
+                    print(f"⚠️ Page extraction failed for {blob.name}: {pe}")
+                    # Fallback: just one page with `content_string` split into lines
+                    pages = [
+                        {"page": 1, "lines": content_string.split("\n")}
+                    ]
+
+                    # Normalize pages: make sure it's always a list of {"page": int, "lines": list[str]}
+                if isinstance(pages, str):
+                    # extractor returned "ERROR: ..." or some text
+                    if pages.startswith("ERROR:"):
+                        print(f"⚠️ Page extractor error for {blob.name}: {pages}")
+                        pages = [
+                            {"page": 1, "lines": content_string.split("\n")}
+                        ]
+                    else:
+                        pages = [
+                            {"page": 1, "lines": pages.split("\n")}
+                        ]
+                elif not pages:
+                    # empty or None -> fallback to content_string
+                    pages = [
+                        {"page": 1, "lines": content_string.split("\n")}
+                    ]
+                elif isinstance(pages, list) and pages and isinstance(pages[0], str):
+                    # list of strings -> treat as lines of page 1
+                    pages = [
+                        {"page": 1, "lines": pages}
+                    ]
+                # Final append – this is what simple_keyword_search expects
+                file_data.append({
+                    "name": relative_name,     # was effectively blob.name before
+                    "full_path": blob.name,
+                    "content": content_string,  # SAME field your search uses
+                    "pages1": pages              # NEW, but extra only
+                })
+
+            except Exception as e:
+                print(f"Error processing {blob.name}: {e}")
+                continue
+
+
+        print(f"✅ Found {len(file_data)} usable documents in directory '{directory_path}'.")
+        return file_data
+
+    except Exception as e:
+        print(f"Error listing/downloading files from GCS: {e}")
+        return []
+
+
+# ==============================================================================
+# --- REVISED SEARCH FUNCTION ---
+# ==============================================================================
+
+def get_gcs_files_context_cache(directory_path: str, bucket_name: str, query: str = "") -> List[Dict[str, Any]]:
+    """
+    Simple non-AI keyword search with in-memory caching for the GCS context
+    to avoid redundant file listing/downloading on the same instance.
+    """
+    # 1. FIX: Added fallback_cache_lock to global scope
+    global LAST_FALLBACK_PATH, GCS_FALLBACK_CACHE, BUCKET_NAME, fallback_cache_lock
+
+    # 2. Strip the directory path for consistent comparison
+    cleaned_path = directory_path.strip("/")
+
+    # 3. Check the instance-level cache
+    with fallback_cache_lock:
+        if cleaned_path == LAST_FALLBACK_PATH and GCS_FALLBACK_CACHE:
+            # CACHE HIT: FIX 2: Create a copy of the list before releasing the lock
+            documents = list(GCS_FALLBACK_CACHE)
+            print(f"CACHE-FALLBACK: Hit for {cleaned_path}. Skipping GCS fetch.")
+        else:
+            # CACHE MISS: Must fetch the data from GCS
+            print(f"CACHE-FALLBACK: Miss for {cleaned_path}. Fetching from GCS.")
+
+            # 4. Fetch from GCS (Slow operation)
+            fetched_documents = get_gcs_files_context(cleaned_path, BUCKET_NAME, query)
+
+            # 5. Update the global fallback cache and create local copy
+            LAST_FALLBACK_PATH = cleaned_path
+            GCS_FALLBACK_CACHE = fetched_documents
+            documents = fetched_documents  # This reference is safe as the lock is about to be released
+
+        return documents
+
 def simple_keyword_search(query: str,
                           directory_path: str = "",
                           mode="any",
@@ -578,8 +703,7 @@ def simple_keyword_search(query: str,
     - match_type: 'partial' or 'full'
     - show_mode: 'line' or 'paragraph'
     """
-
-    documents = get_gcs_files_context(directory_path, BUCKET_NAME, query)
+    documents = get_gcs_files_context_cache(directory_path, BUCKET_NAME, query)
 
 
     if not documents:
@@ -749,41 +873,21 @@ def perform_search(query: str, directory_path: str = ""):
         cache_is_ready = CACHE_STATUS in ["READY", "EMPTY_SUCCESS"]
 
     # 2. DOCUMENT RETRIEVAL (FAST CACHE PATH vs. SLOW FALLBACK)
-    if cache_is_ready:
-        # --- FAST PATH: Retrieve Context from Cache ---
-        search_mode = "CACHED & FILTERED"
-        print(f"RAG: Using {search_mode} context retrieval.")
+    documents = get_gcs_files_context_cache(directory_path, BUCKET_NAME, "")
 
-        # This calls the new function (defined previously)
-        document_context_data, sources_list = get_filtered_context_from_cache(query, directory_path)
+    if not documents:
+        return {
+            "query": query,
+            "status": "Success",
+            "response": "אין מסמכים.",  # Hebrew Fallback
+            "sources": [],
+            "debug": f"No relevant context found by keyword pre-filter. Time: {round(time.time() - timer, 2)}s."
+        }
+    final_prompt_context = documents
 
-        # Check if the filter found anything relevant
-        if not document_context_data:
-            return {
-                "query": query,
-                "status": "Success",
-                "response": "המידע אינו נמצא במסמכים שסופקו.",  # Hebrew Fallback
-                "sources": [],
-                "debug": f"Search mode: {search_mode}. No relevant context found by keyword pre-filter. Time: {round(time.time() - timer, 2)}s."
-            }
-
-        final_prompt_context = document_context_data
-
-    else:
-        # --- SLOW FALLBACK PATH: Synchronous GCS/Vision call (Only if cache is failed/warming up) ---
-        print("RAG: Cache not ready/failed. Falling back to slow synchronous GCS call.")
-
-        # Retain your original slow document retrieval logic (which is now only used as fallback)
-        documents = get_gcs_files_context(directory_path, BUCKET_NAME, "")
-
-        if not documents:
-            return {"status": "Fallback",
-                    "details": f"No usable documents found in '{directory_path}'. All files may have failed content extraction."}
-
-        # Prepare Prompt using the full, unfiltered slow context
-        document_context = "\n\n--- DOCUMENTS CONTEXT (SLOW) ---\n\n"
-        for doc in documents:
-            document_context += f"File: {doc['name']}\nFull Path: {doc['full_path']}\nContent:\n{doc['content']}\n---\n"
+    document_context = ""
+    for doc in documents:
+        document_context += f"File: {doc['name']}\nFull Path: {doc['full_path']}\nContent:\n{doc['content']}\n---\n"
 
         final_prompt_context = document_context
         sources_list = [doc['name'] for doc in documents]
@@ -857,7 +961,7 @@ def perform_search2(query: str, directory_path: str = ""):
         return {"status": "Fallback", "details": "Gemini client not initialized. Check API Key."}
 
     # 1. Retrieve and process documents
-    documents = get_gcs_files_context(directory_path, BUCKET_NAME,"")
+    documents = get_gcs_files_context_cache(directory_path, BUCKET_NAME, query)
 
     if not documents:
         # If no documents were processed successfully (could be due to OCR failure on all files)

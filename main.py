@@ -43,7 +43,8 @@ api_key = os.environ.get("GEMINI_API_KEY")  # $Env:OPENAI_API_KEY = "sk-proj-vf-
 MODEL_NAME = 'gemini-2.5-flash'
 chat_mode = 'gemini'
 
-CLIENT_PREFIX_TO_STRIP = "C:/a/מצרפי"
+
+
 
 RLO = u"\u202e"
 CONFIG_FILE = "config.txt"
@@ -66,7 +67,7 @@ from config_reader import read_setup
 API_search_url=read_setup("API_search_url")
 API_simple_search_url=read_setup("API_simple_search_url")
 
-
+CLIENT_PREFIX_TO_STRIP=read_setup("CLIENT_PREFIX_TO_STRIP")
 
 
 
