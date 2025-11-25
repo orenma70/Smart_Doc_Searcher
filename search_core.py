@@ -425,237 +425,10 @@ def initialize_document_cache(directory_path: str):
             CACHE_STATUS = "FAILED"
 
 
-def simple_keyword_search2(query: str,
-                          directory_path: str = "",
-                          mode="any",
-                          match_type="partial",
-                          show_mode="line"):
-    """
-    FAST simple keyword search using the pre-warmed DOCUMENT_CACHE.
-    - directory_path is only used to filter the cache, not to hit GCS.
-    """
-    if not DOCUMENT_CACHE:
-        return {
-            "status": "error",
-            "details": "Document cache is empty or failed to initialize during startup.",
-            "matches": []
-        }
-
-    # 1. Filter the cache based on the requested directory_path
-    # We filter by full_path starting with the prefix (e.g., 'docs-dir/' or '' for root)
-    prefix = directory_path.strip("/")
-    if prefix:
-        prefix += "/"
-
-    # Use the cache instead of hitting GCS
-    documents = [
-        doc_data for doc_path, doc_data in DOCUMENT_CACHE.items()
-        if doc_path.startswith(prefix)
-    ]
-
-    if not documents:
-        return {
-            "status": "ok",
-            "details": f"No cached documents found in directory '{directory_path}'.",
-            "matches": []
-        }
-
-    # Split query into separate words
-    words = [w.strip() for w in query.split() if w.strip()]
-    if not words:
-        return {"status": "ok", "details": "Empty query", "matches": []}
-
-    results = []
-    debug_str =""
-    # 2. Perform search on cached content (rest of the logic is fast)
-    for doc in documents:
-        debug_str = doc['full_path']
-        matched_items = []
-        matched_items_html = []
-
-        # --- Search runs directly on the cached 'content' string ---
-        content = doc.get("content", "")
-
-        if show_mode == "line":
-            lines = content.split("\n")
-
-            for line in lines:
-                if match_line(line, words, mode=mode, match_type=match_type):
-                    matched_items.append(line)
-                    matched_items_html.append(
-                        highlight_matches_html(line, words, match_type=match_type)
-                    )
-
-        else:  # paragraph mode
-            paragraphs = split_into_paragraphs(content)
-            for paragraph in paragraphs:
-                if match_line(paragraph, words, mode=mode, match_type=match_type):
-                    matched_items.append(paragraph)
-                    matched_items_html.append(
-                        highlight_matches_html(paragraph, words, match_type=match_type)
-                    )
-
-        # NOTE: match_positions (page/line) logic is complex without pages data in the cache.
-        # For simple search, we will skip or simplify it here, focusing on speed.
-
-        if matched_items:
-            results.append({
-                "file": os.path.basename(doc["full_path"]),  # Use base name for file display
-                "full_path": doc["full_path"],
-                "matches": matched_items,
-                "matches_html": matched_items_html,
-                "match_positions": []  # Simplified for speed/caching
-            })
-            debug_str += "match"
-        else:
-            debug_str += "no match"
-    return {
-        "debug": debug_str,
-        "status": "ok",
-        "query": query,
-        "directory_path": directory_path,
-        "mode": mode,
-        "match_type": match_type,
-        "show_mode": show_mode,
-        "matches": results
-    }
-
-
-
-
 # ==============================================================================
 # --- MOCK & PLACEHOLDER FUNCTIONS ---
 # NOTE: Replace these with your actual implementations
 # ==============================================================================
-
-
-
-def get_gcs_files_context44(directory_path: str, bucket_name: str, query: str = "") -> List[Dict[str, Any]]:
-    """Fetches, downloads, processes, and limits content from GCS."""
-
-    if storage_client is None:
-        print("⚠️ Storage client is not initialized.")
-        return []
-
-    # Normalize directory_path (allow root if empty)
-    directory_path = (directory_path or "").strip("/")
-
-    print(f"🔍 Fetching files from gs://{bucket_name}/{directory_path}/")
-
-    SUPPORTED_EXTENSIONS = ('.docx', '.pdf', '.txt')
-    prefix = f"{directory_path}/" if directory_path else ""
-    file_data = []
-
-    try:
-        bucket = storage_client.bucket(bucket_name)
-
-        blobs = bucket.list_blobs(prefix=prefix)
-
-        for blob in blobs:
-            blob_name_lower = blob.name.lower()
-
-            # Skip the "folder" itself, empty files, and unsupported extensions
-            if (
-                blob.name == prefix
-                or blob.size == 0
-                or not blob_name_lower.endswith(SUPPORTED_EXTENSIONS)
-            ):
-                continue
-
-            try:
-                full_gcs_path = blob.name
-
-                # Download bytes for DOCX/PDF/TXT and let extract_content handle details
-                file_content_bytes = blob.download_as_bytes()
-                content_string = extract_content(file_content_bytes, blob.name, full_gcs_path)
-                # Check for errors before processing
-                if isinstance(content_string, str) and content_string.startswith("ERROR:"):
-                    print(f"⚠️ Skipping file {blob.name} due to extraction error.")
-                    continue
-
-                if not content_string:
-                    # nothing extracted – skip file
-                    continue
-
-                # Truncate content if too long (this is the SAME logic as before)
-                if len(content_string) > MAX_CHARS_PER_DOC:
-                    print(f"⚠️ Truncating file {blob.name} to {MAX_CHARS_PER_DOC} chars.")
-                    content_string = content_string[:MAX_CHARS_PER_DOC]
-
-                # 1. Relative name (nice for UI and Gemini “File: …”)
-                if prefix and blob.name.startswith(prefix):
-                    relative_name = blob.name[len(prefix):]  # e.g. "file.pdf" or "sub/file.pdf"
-                else:
-                    relative_name = blob.name
-
-                # 2. Pages structure for page+line info (NEW), but safe:
-                #    if extractors fail, just fall back to a single-page view of content.
-                pages = []
-
-                try:
-                    if blob_name_lower.endswith('.pdf'):
-                        # Expected: [{"page": 1, "lines": [...]}, ...]
-                        pages = find_all_word_positions_in_pdf(file_content_bytes, query)
-                    elif blob_name_lower.endswith('.docx'):
-                        # Expected: [{"page": 1, "lines": [...]}, ...]
-                        pages = extract_docx_with_lines(file_content_bytes)
-
-                    else:
-                        # TXT: split content into lines as one page
-                        text = file_content_bytes.decode("utf-8", errors="ignore")
-                        pages = [
-                            {"page": 1, "lines": text.split("\n")}
-                        ]
-
-                except Exception as pe:
-                    print(f"⚠️ Page extraction failed for {blob.name}: {pe}")
-                    # Fallback: just one page with `content_string` split into lines
-                    pages = [
-                        {"page": 1, "lines": content_string.split("\n")}
-                    ]
-
-                    # Normalize pages: make sure it's always a list of {"page": int, "lines": list[str]}
-                if isinstance(pages, str):
-                    # extractor returned "ERROR: ..." or some text
-                    if pages.startswith("ERROR:"):
-                        print(f"⚠️ Page extractor error for {blob.name}: {pages}")
-                        pages = [
-                            {"page": 1, "lines": content_string.split("\n")}
-                        ]
-                    else:
-                        pages = [
-                            {"page": 1, "lines": pages.split("\n")}
-                        ]
-                elif not pages:
-                    # empty or None -> fallback to content_string
-                    pages = [
-                        {"page": 1, "lines": content_string.split("\n")}
-                    ]
-                elif isinstance(pages, list) and pages and isinstance(pages[0], str):
-                    # list of strings -> treat as lines of page 1
-                    pages = [
-                        {"page": 1, "lines": pages}
-                    ]
-                # Final append – this is what simple_keyword_search expects
-                file_data.append({
-                    "name": relative_name,     # was effectively blob.name before
-                    "full_path": blob.name,
-                    "content": content_string,  # SAME field your search uses
-                    "pages1": pages              # NEW, but extra only
-                })
-
-            except Exception as e:
-                print(f"Error processing {blob.name}: {e}")
-                continue
-
-
-        print(f"✅ Found {len(file_data)} usable documents in directory '{directory_path}'.")
-        return file_data
-
-    except Exception as e:
-        print(f"Error listing/downloading files from GCS: {e}")
-        return []
-
 
 # ==============================================================================
 # --- REVISED SEARCH FUNCTION ---
@@ -955,85 +728,7 @@ def perform_search(query: str, directory_path: str = ""):
         "sources": sources_list,  # Use the list generated in Step 2
         "debug": f"Search mode: {search_mode if cache_is_ready else 'SLOW FALLBACK'}. Total time: {round(time.time() - timer, 2)}s."
     }
-def perform_search2(query: str, directory_path: str = ""):
-    """Performs the RAG search using the globally initialized clients with multi-model fallback."""
-    if not gemini_client:
-        return {"status": "Fallback", "details": "Gemini client not initialized. Check API Key."}
 
-    # 1. Retrieve and process documents
-    documents = get_gcs_files_context_cache(directory_path, BUCKET_NAME, query)
-
-    if not documents:
-        # If no documents were processed successfully (could be due to OCR failure on all files)
-        return {"status": "Fallback",
-                "details": f"No usable documents found in '{directory_path}'. All files may have failed content extraction."}
-
-    # 2. Prepare Prompt for Gemini
-    document_context = "\n\n--- DOCUMENTS CONTEXT ---\n\n"
-    for doc in documents:
-        document_context += f"File: {doc['name']}\nFull Path: {doc['full_path']}\nContent:\n{doc['content']}\n---\n"
-
-    system_instruction = (
-        "You are a helpful assistant. Provide the answer in Hebrew (עברית). "
-        "Use ONLY the provided document text as context "
-        "to answer the question. If the information is not in the text, reply #$$$#"
-    )
-
-    final_prompt = (
-        f"DOCUMENT CONTEXT:\n---\n{document_context}\n---\n\n"
-        f"QUESTION: {query}"
-    )
-
-    # 3. Call Gemini API with Fallback Logic
-    try:
-        response = gemini_client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=final_prompt,
-            config={"system_instruction": system_instruction}
-        )
-        print("✅ Response received from gemini-2.5-flash.")
-
-    except errors.APIError as e:
-        if '503 UNAVAILABLE' not in str(e) and '500' not in str(e):
-            print(f"Non-503/500 Gemini API Error: {e}")
-            traceback.print_exc()
-            return {
-                "status": "API Error",
-                "details": f"Check your request or API configuration. Error: {e}"
-            }
-
-        # Attempt 2: gemini-2.5-pro (Fallback)
-        print("⚠️ gemini-2.5-flash overloaded. Falling back to gemini-2.5-pro...")
-        try:
-            response = gemini_client.models.generate_content(
-                model='gemini-2.5-pro',
-                contents=final_prompt,
-                config={"system_instruction": system_instruction}
-            )
-            print("✅ Response received from gemini-2.5-pro (Fallback Success).")
-        except Exception as fallback_e:
-            print(f"❌ Fallback to gemini-2.5-pro failed: {fallback_e}")
-            traceback.print_exc()
-            return {
-                "status": "API Error",
-                "details": f"Both models are unavailable. Error: {fallback_e}"
-            }
-
-    except Exception as e:
-        print(f"Unhandled non-API error: {e}")
-        return {
-            "status": "API Error",
-            "details": f"An unknown error occurred: {e}"
-        }
-
-    # Success: Return the result
-    response_text = response.text.replace("#$$$#", "המידע אינו נמצא במסמכים שסופקו.")
-    return {
-        "query": query,
-        "status": "Success (RAG)",
-        "response": response_text,
-        "sources": [doc['name'] for doc in documents]
-    }
 
 
 def start_cache_thread(directory_path: str):
@@ -1113,8 +808,8 @@ def simple_search_endpoint():
         cache_is_ready = current_status in ["READY", "EMPTY_SUCCESS"]
 
     # 3. Decision Tree: Fallback (Slow) or Cache (Fast)?
-
-    if not cache_is_ready:
+    cache_is_ready = True
+    if cache_is_ready:
 
         # --- SLOW FALLBACK PATH (Synchronous GCS Call) ---
         print(f"LOG: Cache Status: '{current_status}'. Executing slow GCS search.")
@@ -1147,23 +842,7 @@ def simple_search_endpoint():
         # --- FAST CACHED PATH (In-memory Call) ---
         print(f"LOG: Cache Status: '{current_status}'. Executing fast cached search.")
         try:
-            result = simple_keyword_search2(
-                query,
-                directory_path,
-                mode=mode,
-                match_type=match_type,
-                show_mode=show_mode
-            )
-
-            time_stamp += f"{round(100 * (time.time() - timer0)) / 100} sec "
-            time_stamp += f" new simple_keyword_search={round(100 * (time.time() - timer1)) / 100},"
-            time_stamp += CACHE_STATUS
-            if "debug" in result:
-                result["debug"] += time_stamp
-            else:
-                result["debug"] = time_stamp
-
-            return jsonify(result), 200
+            return jsonify({"error": f"Cached not ready"}), 500
 
         except Exception as e:
             print(f"ERROR in simple_search_endpoint (cached search): {e}")
