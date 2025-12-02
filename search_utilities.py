@@ -20,15 +20,49 @@ gemini_client = None
 gcs_bucket = None     # <-- NEW: Store the GCS Bucket object once
 
 # --- Global Shared State for Caching ---
-DOCUMENT_CACHE = {} # Stores extracted text
-CACHE_STATUS = "PENDING"  # "PENDING", "READY", "FAILED", "WARMING_UP"
-cache_lock = threading.Lock() # To safely manage global state updates
+
+
 MAX_CHARS_PER_DOC = 100000
 
-LAST_FALLBACK_PATH: str = ""
-GCS_FALLBACK_CACHE: List[Dict[str, Any]] = []
+# In search_utilities.py (UPDATED GLOBALS)
+# --- Global Shared State for Caching ---
+# Key: directory_path (e.g., "my_folder/docs")
+# Value: List[Dict] (The document data for that path)
+DIRECTORY_CACHE_MAP: Dict[str, List[Dict]] = {}
+cache_lock = threading.Lock() # Use this lock for thread-safe access to the map
 
-fallback_cache_lock = threading.Lock()
+# The existing get_gcs_files_context function is used below (assuming it's here)
+
+def get_documents_for_path(directory_path: str) -> List[Dict[str, Any]]:
+    """
+    Retrieves document context for a path. Fetches from GCS only if not in cache.
+    The returned list contains objects: [{"name": str, "full_path": str, "content": str, ...}]
+    """
+    global DIRECTORY_CACHE_MAP, cache_lock
+
+    # Clean the path for consistent key lookup
+    cleaned_path = directory_path.strip("/")
+
+    # 1. READ CHECK (FAST PATH)
+    with cache_lock:
+        if cleaned_path in DIRECTORY_CACHE_MAP:
+            print(f"CACHE-HIT: Returning cached documents for '{cleaned_path}'.")
+            # Always return a copy for safety
+            return list(DIRECTORY_CACHE_MAP[cleaned_path])
+
+    # 2. CACHE MISS (SLOW PATH - Fetch from GCS)
+    print(f"CACHE-MISS: Fetching from GCS for '{cleaned_path}'. This may be slow.")
+
+    # Use your existing synchronous GCS fetching function.
+    # NOTE: We pass BUCKET_NAME which is defined in this file.
+    fetched_documents = get_gcs_files_context(cleaned_path, BUCKET_NAME)
+
+    # 3. WRITE TO CACHE
+    with cache_lock:
+        DIRECTORY_CACHE_MAP[cleaned_path] = fetched_documents
+        print(f"CACHE-WRITE: Stored {len(fetched_documents)} documents for '{cleaned_path}'.")
+
+    return fetched_documents
 
 def initialize_all_clients():
     """
@@ -130,67 +164,6 @@ def get_gemini_client_instance():
     if gemini_client is None:
         initialize_all_clients()
     return gemini_client
-
-
-def initialize_document_cache(directory_path: str):
-    """
-    Builds the document cache by listing, downloading, and extracting content
-    from GCS. This runs ONCE in the background thread.
-    """
-    global DOCUMENT_CACHE,  CACHE_STATUS, cache_lock
-
-    gcs_bucket = get_gcs_bucket()
-    if gcs_bucket is None:
-        with cache_lock:
-            CACHE_STATUS = "FAILED"
-            print("CACHE-INIT: Failed to run because gcs_bucket is None.")
-        return
-
-    print(f"CACHE-INIT: Starting background cache process for prefix: {directory_path}...")
-    cache_start_time = time.time()
-    temp_cache = {}
-
-    try:
-        prefix = directory_path.strip("/")
-        if prefix: prefix += "/"
-
-        # This list_blobs call is a common place for the thread to crash
-        blobs = gcs_bucket.list_blobs(prefix=prefix)
-
-        for blob in blobs:
-            # We keep the file-level error handling to prevent the loop from aborting
-            try:
-                if blob.size == 0 or blob.name.endswith('/'): continue
-
-                blob_bytes = blob.download_as_bytes()
-                # Assuming extract_content3 is robust enough for your file types
-                extracted_text = extract_content3(blob_bytes, blob.name)
-
-                if extracted_text and not extracted_text.startswith("ERROR:"):
-                    temp_cache[blob.name] = {
-                        "filename": os.path.basename(blob.name),
-                        "full_path": blob.name,
-                        "content": extracted_text,
-                    }
-
-            except Exception as dl_e:
-                # Log the error and move to the next file
-                print(f"❌ ERROR processing file {blob.name}: {dl_e}")
-
-        # --- CRITICAL SUCCESS BLOCK ---
-        with cache_lock:
-            DOCUMENT_CACHE = temp_cache
-            # Set to READY even if empty, to ensure the state machine moves forward
-            CACHE_STATUS = "READY"
-            cache_time = round(time.time() - cache_start_time, 2)
-            print(f"CACHE-INIT: SUCCESS. Status: READY with {len(temp_cache)} files in {cache_time}s.")
-
-    except Exception as e:
-        # --- CRITICAL FAILURE BLOCK ---
-        print(f"CACHE-INIT: CATASTROPHIC ERROR (Bucket list failed): {e}")
-        traceback.print_exc()
-        with cache_lock:
-            CACHE_STATUS = "FAILED"
 
 
 
@@ -402,37 +375,4 @@ def get_gcs_files_context(directory_path: str, bucket_name: str, query: str = ""
 # ==============================================================================
 # --- REVISED SEARCH FUNCTION ---
 # ==============================================================================
-
-def get_gcs_files_context_cache(directory_path: str, bucket_name: str, query: str = "") -> List[Dict[str, Any]]:
-    """
-    Simple non-AI keyword search with in-memory caching for the GCS context
-    to avoid redundant file listing/downloading on the same instance.
-    """
-    # 1. FIX: Added fallback_cache_lock to global scope
-    global LAST_FALLBACK_PATH, GCS_FALLBACK_CACHE, BUCKET_NAME, fallback_cache_lock
-
-    # 2. Strip the directory path for consistent comparison
-    cleaned_path = directory_path.strip("/")
-
-    # 3. Check the instance-level cache
-    with fallback_cache_lock:
-        if cleaned_path == LAST_FALLBACK_PATH and GCS_FALLBACK_CACHE:
-            # CACHE HIT: FIX 2: Create a copy of the list before releasing the lock
-            documents = list(GCS_FALLBACK_CACHE)
-            print(f"CACHE-FALLBACK: Hit for {cleaned_path}. Skipping GCS fetch.")
-        else:
-            # CACHE MISS: Must fetch the data from GCS
-            print(f"CACHE-FALLBACK: Miss for {cleaned_path}. Fetching from GCS.")
-
-            # 4. Fetch from GCS (Slow operation)
-            fetched_documents = get_gcs_files_context(cleaned_path, BUCKET_NAME, query)
-
-            # 5. Update the global fallback cache and create local copy
-            LAST_FALLBACK_PATH = cleaned_path
-            GCS_FALLBACK_CACHE = fetched_documents
-            documents = fetched_documents  # This reference is safe as the lock is about to be released
-
-        return documents
-
-
 

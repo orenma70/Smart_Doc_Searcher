@@ -16,7 +16,7 @@ from typing import List, Dict, Any, Tuple
 import threading
 
 
-from search_utilities import (get_gcs_files_context_cache, initialize_document_cache, initialize_all_clients, get_gcs_bucket, get_storage_client_instance,
+from search_utilities import (get_documents_for_path, initialize_all_clients, get_gcs_bucket, get_storage_client_instance,
                               get_vision_client_instance, get_gemini_client_instance)
 from config_reader import BUCKET_NAME
 
@@ -28,17 +28,7 @@ from config_reader import BUCKET_NAME
 from document_parsers import extract_docx_with_lines, find_all_word_positions_in_pdf, split_into_paragraphs, match_line, highlight_matches_html, find_paragraph_position_in_pages
 # ... existing configurations ...
 
-#
 
-DOCUMENT_CACHE = {} # <-- NEW: This will store extracted text to prevent re-downloading
-
-# --- Global Shared State ---
-
-# 3. CACHE_STATUS: Flag to track the readiness of the cache.
-# Possible values: "PENDING", "READY", "FAILED".
-CACHE_STATUS = "PENDING"  # To track the state
-cache_lock = threading.Lock() # To safely manage global state updates
-cache_thread: threading.Thread | None = None # To hold the background thread instance
 timer1 = 0
 
 
@@ -55,8 +45,7 @@ def simple_keyword_search(query: str,
     - match_type: 'partial' or 'full'
     - show_mode: 'line' or 'paragraph'
     """
-    documents = get_gcs_files_context_cache(directory_path, BUCKET_NAME, query)
-
+    documents = get_documents_for_path(directory_path)
 
     if not documents:
         return {
@@ -161,19 +150,16 @@ def perform_search(query: str, directory_path: str = ""):
     Performs the RAG search, now using the cache and context filtering
     to drastically improve speed.
     """
-    global CACHE_STATUS, cache_lock
+
     timer = time.time()  # Start timer
     gemini_client = get_gemini_client_instance()
 
     if not gemini_client:
         return {"status": "Fallback", "details": "Gemini client not initialized. Check API Key."}
 
-    # 1. CHECK CACHE STATUS
-    with cache_lock:
-        cache_is_ready = CACHE_STATUS in ["READY", "EMPTY_SUCCESS"]
 
     # 2. DOCUMENT RETRIEVAL (FAST CACHE PATH vs. SLOW FALLBACK)
-    documents = get_gcs_files_context_cache(directory_path, BUCKET_NAME, "")
+    documents = get_documents_for_path(directory_path)
 
     if not documents:
         return {
@@ -253,48 +239,10 @@ def perform_search(query: str, directory_path: str = ""):
         "status": "Success (RAG)",
         "response": response_text,
         "sources": sources_list,  # Use the list generated in Step 2
-        "debug": f"Search mode: {search_mode if cache_is_ready else 'SLOW FALLBACK'}. Total time: {round(time.time() - timer, 2)}s."
+        "debug": f"Search mode: ."
     }
 
 
-
-def start_cache_thread(directory_path: str):
-    """
-    Starts the background thread responsible for populating the cache ONLY IF
-    it is not already running or finished successfully.
-    """
-    global cache_thread, CACHE_STATUS
-
-    with cache_lock:
-        print(f"START-CACHE: Lock acquired. Current Status: {CACHE_STATUS}. Thread Alive: {cache_thread and cache_thread.is_alive()}")
-
-        # Check if the existing thread is dead (stale)
-        is_thread_stale = cache_thread and not cache_thread.is_alive()
-
-        # Condition to start the thread:
-        # 1. Status is an initial/failure state (PENDING, FAILED, EMPTY_SUCCESS)
-        # 2. OR the thread is stale AND the status is stuck on WARMING_UP (retry needed)
-        if CACHE_STATUS in ["PENDING", "FAILED", "EMPTY_SUCCESS"] or (is_thread_stale and CACHE_STATUS == "WARMING_UP"):
-
-            if is_thread_stale and CACHE_STATUS != "READY":
-                print("START-CACHE: Previous thread finished with non-READY status or stalled. Retrying initialization.")
-
-            CACHE_STATUS = "WARMING_UP"
-            print(f"START-CACHE: Setting Status to WARMING_UP and launching thread...")
-
-            # Directory path is currently ignored in initialize_document_cache as per your setup, but kept for future proofing.
-            cache_thread = threading.Thread(
-                target=initialize_document_cache,
-                args=(directory_path,),
-                daemon=False
-            )
-            cache_thread.start()
-            print("START-CACHE: Thread launched successfully.")
-            return True
-        else:
-            print(f"START-CACHE: Cache thread already running or ready (Status: {CACHE_STATUS}). Skipping launch.")
-            return False
-# --- Flask Application Setup ---
 
 app = Flask(__name__)
 
@@ -309,7 +257,7 @@ def get_cache_status():
 
     with cache_lock:
         current_status = CACHE_STATUS
-        doc_count = len(DOCUMENT_CACHE)
+        doc_count = len(DIRECTORY_CACHE_MAP)
         cPROCESS_PROGRESS = PROCESS_PROGRESS
         cGLOBAL_CACHE_PROGRESS = GLOBAL_CACHE_PROGRESS
 
@@ -324,13 +272,8 @@ def get_cache_status():
 
 
 @app.route('/simple_search', methods=['POST'])
-
-
 def simple_search_endpoint():
-    # 1. Ensure the cache thread is started non-blocking (if needed)
-    global timer1
-    start_cache_thread("")
-
+    # 1. Start the timer immediately
     timer1 = time.time()
     time_stamp = ""
 
@@ -347,60 +290,45 @@ def simple_search_endpoint():
     if not query or not directory_path:
         return jsonify({"error": "Missing 'query' or 'directory_path' in request."}), 400
 
-    global CACHE_STATUS
+    # --- CRITICAL SIMPLIFICATION ---
+    # We remove global CACHE_STATUS, cache_lock, and the conditional logic.
+    # The simple_keyword_search function now handles all caching internally.
 
-    # 2. Acquire status safely to decide the path
-    with cache_lock:
-        current_status = CACHE_STATUS
-        cache_is_ready = current_status in ["READY", "EMPTY_SUCCESS"]
+    print(f"LOG: Executing keyword search for '{query}' in '{directory_path}'.")
 
-    # 3. Decision Tree: Fallback (Slow) or Cache (Fast)?
-    cache_is_ready = True
-    if cache_is_ready:
+    try:
+        # 2. Call the search function, which handles cache hit/miss transparently
+        result = simple_keyword_search(
+            query,
+            directory_path,
+            mode=mode,
+            match_type=match_type,
+            show_mode=show_mode
+        )
 
-        # --- SLOW FALLBACK PATH (Synchronous GCS Call) ---
-        print(f"LOG: Cache Status: '{current_status}'. Executing slow GCS search.")
-        try:
-            result = simple_keyword_search(
-                query,
-                directory_path,
-                mode=mode,
-                match_type=match_type,
-                show_mode=show_mode
-            )
+        # 3. Handle debugging/timing stamps
+        total_time = round(time.time() - timer1, 2)
+        time_stamp += f"{total_time} sec "
 
-            time_stamp += f"{round(100 * (time.time() - timer1)) / 100} sec "
-            time_stamp += f" new simple_keyword_search={round(100 * (time.time() - timer1)) / 100},"
-            time_stamp += CACHE_STATUS
+        # NOTE: CACHE_STATUS is no longer a global; you might remove it here
+        # or update the simple_keyword_search function to return the cache status
+        # (HIT/MISS) if you want to log it. Assuming it's removed for now.
 
-            if "debug" in result:
-                result["debug"] += time_stamp
-            else:
-                result["debug"] = time_stamp
+        if "debug" in result:
+            result["debug"] += time_stamp
+        else:
+            result["debug"] = time_stamp
 
-            return jsonify(result), 200
+        return jsonify(result), 200
 
-        except Exception as e:
-            print(f"ERROR in simple_keyword_search fallback: {e}")
-            traceback.print_exc()
-            return jsonify({"error": f"Fallback search failed: {str(e)}"}), 500
-
-    else:
-        # --- FAST CACHED PATH (In-memory Call) ---
-        print(f"LOG: Cache Status: '{current_status}'. Executing fast cached search.")
-        try:
-            return jsonify({"error": f"Cached not ready"}), 500
-
-        except Exception as e:
-            print(f"ERROR in simple_search_endpoint (cached search): {e}")
-            traceback.print_exc()
-            return jsonify({"error": f"Cached search failed: {str(e)}"}), 500
-
-
+    except Exception as e:
+        print(f"ERROR in simple_keyword_search: {e}")
+        traceback.print_exc()
+        return jsonify({"error": f"Search failed: {str(e)}"}), 500
 
 @app.route('/search', methods=['POST'])
 def search_endpoint():
-    start_cache_thread("")
+
     data = request.get_json(silent=True)
 
     if data is None:
