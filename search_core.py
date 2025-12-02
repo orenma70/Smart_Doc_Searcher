@@ -15,42 +15,22 @@ from pypdf import PdfReader
 from typing import List, Dict, Any, Tuple
 import threading
 
-from concurrent.futures import ThreadPoolExecutor
 
-
+from search_utilities import (get_gcs_files_context_cache, initialize_document_cache, initialize_all_clients, get_gcs_bucket, get_storage_client_instance,
+                              get_vision_client_instance, get_gemini_client_instance)
+from config_reader import BUCKET_NAME
 
 # ==============================================================================
 # --- GLOBAL STATE FOR FALLBACK CACHING ---
 # ==============================================================================
 
-# Lock for thread-safe updates to the global fallback cache
-fallback_cache_lock = threading.Lock()
 
-# Stores the last directory_path that was successfully fetched from GCS
-LAST_FALLBACK_PATH: str = ""
-
-# Stores the GCS file context retrieved from get_gcs_files_context
-# Structure: List[Dict[str, Any]] (A list of document objects)
-GCS_FALLBACK_CACHE: List[Dict[str, Any]] = []
-
-
-from document_parsers import extract_content3, extract_docx_with_lines, find_all_word_positions_in_pdf, split_into_paragraphs, match_line, highlight_matches_html, find_paragraph_position_in_pages
+from document_parsers import extract_docx_with_lines, find_all_word_positions_in_pdf, split_into_paragraphs, match_line, highlight_matches_html, find_paragraph_position_in_pages
 # ... existing configurations ...
 
-# NEW: Required for Vision API Asynchronous PDF OCR output
-
-MAX_CHARS_PER_DOC = 100000
-
-
-
-from config_reader import read_setup
-BUCKET_NAME=read_setup("BUCKET_NAME")
-#BUCKET_NAME="oren-smart-search-docs-1205"
-
-GCS_OCR_OUTPUT_PATH = "gs://" + BUCKET_NAME + "/vision_ocr_output/"
+#
 
 DOCUMENT_CACHE = {} # <-- NEW: This will store extracted text to prevent re-downloading
-gcs_bucket = None     # <-- NEW: Store the GCS Bucket object once
 
 # --- Global Shared State ---
 
@@ -59,411 +39,10 @@ gcs_bucket = None     # <-- NEW: Store the GCS Bucket object once
 CACHE_STATUS = "PENDING"  # To track the state
 cache_lock = threading.Lock() # To safely manage global state updates
 cache_thread: threading.Thread | None = None # To hold the background thread instance
+timer1 = 0
 
 
-def get_storage_client():
-    """Initializes and returns the Google Cloud Storage client."""
-    try:
-        return storage.Client()
-    except Exception as e:
-        print(f"FATAL: Could not initialize GCS client. Error: {e}")
-        return None
 
-
-def get_vision_client():
-    """Initializes and returns the Google Cloud Vision client."""
-    try:
-        #return vision.V1.ImageAnnotatorClient() #vision.ImageAnnotatorClient()
-        return vision.ImageAnnotatorClient()
-    except Exception as e:
-        print(f"FATAL: Could not initialize Vision client. Error: {e}")
-        return None
-
-
-def get_gemini_client():
-    """Initializes and returns the Gemini client."""
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        print("FATAL: GEMINI_API_KEY environment variable not set.")
-        return None
-    try:
-        return genai.Client(api_key=api_key)
-    except Exception as e:
-        print(f"FATAL: Could not initialize Gemini client. Check API Key. Error: {e}")
-        return None
-
-
-# --- Global Client Variables (Set to None for Lazy Loading) ---
-storage_client = None
-vision_client = None
-gemini_client = None
-
-
-def initialize_all_clients():
-    """
-    Initializes clients only if they haven't been initialized yet.
-    This runs inside the request context on the first call.
-    """
-    # CRITICAL: Add gcs_bucket to the global list
-    global storage_client, gemini_client, vision_client, gcs_bucket
-
-    # 1. Initialize Storage Client and Bucket
-    if storage_client is None:
-        storage_client = get_storage_client()
-
-        # --- CRITICAL INSERTION POINT ---
-        if storage_client is not None and BUCKET_NAME and gcs_bucket is None:
-            try:
-                # This line sets the global gcs_bucket variable!
-                gcs_bucket = storage_client.bucket(BUCKET_NAME)
-                print(f"✅ GCS STEP 2: Successfully connected to Bucket '{BUCKET_NAME}'.")
-            except Exception as e:
-                print(f"FATAL: GCS STEP 2: FAILED to get Bucket '{BUCKET_NAME}'. Check IAM Permissions. Error: {e}")
-                gcs_bucket = None  # Ensure it is None on failure
-        # --- END CRITICAL INSERTION POINT ---
-
-    # 2. Initialize other clients
-    if vision_client is None:
-        vision_client = get_vision_client()
-
-    if gemini_client is None:
-        gemini_client = get_gemini_client()
-
-    # Returns True only if all critical clients are initialized
-    return (storage_client is not None and gcs_bucket is not None and  # Ensure gcs_bucket is checked!
-            gemini_client is not None and vision_client is not None)
-
-# --- Utility Functions (RAG Logic) ---
-def detect_text_gcs(bucket_name, file_path):
-    """
-    Performs OCR on the image file in GCS using the Vision API.
-    Returns the extracted text or an error message.
-    """
-    if vision_client is None:
-        return "ERROR: Vision client not initialized."
-
-    print(f"👁️ Starting OCR for gs://{bucket_name}/{file_path}")
-
-    # Use the GCS path for the Vision API to read the image directly
-    image = vision.Image()
-    image.source.image_uri = f'gs://{bucket_name}/{file_path}'
-
-    try:
-        # Use document_text_detection for dense text and accurate layout
-        response = vision_client.document_text_detection(image=image)
-
-        if response.full_text_annotation and response.full_text_annotation.text:
-            print("✅ OCR successful.")
-            return response.full_text_annotation.text
-        else:
-            print("⚠️ OCR found no text.")
-            return "ERROR: OCR detected no text content in the image."
-
-    except Exception as e:
-        # ❌ CRITICAL CHANGE: Log the full traceback to help debug IAM/API errors
-        print(f"❌ OCR Error for {file_path}: {e}")
-        print("--- FULL OCR TRACEBACK START ---")
-        # This will print the exact reason for the failure (e.g., PermissionDenied)
-        traceback.print_exc()
-        print("--- FULL OCR TRACEBACK END ---")
-        return f"ERROR: OCR failed, likely due to IAM permissions or file format. Details: {e}"
-
-def detect_text_gcs_async(gcs_uri, gcs_destination_uri):
-    """
-    Performs asynchronous OCR on a PDF in GCS using the Vision API.
-    gcs_uri: Input GCS path of the PDF (e.g. 'gs://bucket/folder/file.pdf').
-    gcs_destination_uri: GCS folder prefix where JSON results will be written
-                         (e.g. 'gs://bucket/vision_ocr_output/job123/').
-    """
-    if vision_client is None:
-        return "ERROR: Vision client not initialized."
-
-    print(f"👁️ Starting ASYNC PDF OCR for {gcs_uri} -> {gcs_destination_uri}")
-
-    # 1) Build Vision request objects
-    feature = vision.Feature(type_=vision.Feature.Type.DOCUMENT_TEXT_DETECTION)
-
-    gcs_source = vision.GcsSource(uri=gcs_uri)
-    input_config = vision.InputConfig(
-        gcs_source=gcs_source,
-        mime_type="application/pdf",  # ✅ important
-    )
-
-    gcs_destination = vision.GcsDestination(uri=gcs_destination_uri)
-    output_config = vision.OutputConfig(
-        gcs_destination=gcs_destination,
-        batch_size=5,  # pages per JSON file (tune if needed)
-    )
-
-    async_request = vision.AsyncAnnotateFileRequest(
-        features=[feature],
-        input_config=input_config,
-        output_config=output_config,
-    )
-
-    # 2) Call async_batch_annotate_files (this is the correct method)
-    operation = vision_client.async_batch_annotate_files(requests=[async_request])
-
-    try:
-        result = operation.result(timeout=300)  # wait up to 5 minutes
-        print("✅ ASYNC PDF OCR operation finished.")
-    except Exception as e:
-        print(f"❌ ASYNC OCR operation failed or timed out: {e}")
-        traceback.print_exc()
-        return f"ERROR: ASYNC OCR failed or timed out: {e}"
-
-    # 3) Read JSON outputs from the destination bucket
-    full_text = ""
-    storage_cli = get_storage_client()
-
-    # Parse bucket and prefix from 'gs://bucket/prefix/...'
-    parts = gcs_destination_uri.replace("gs://", "").split("/", 1)
-    out_bucket_name = parts[0]
-    out_prefix = parts[1].rstrip("/") + "/"
-
-    try:
-        bucket = storage_cli.bucket(out_bucket_name)
-        blobs = bucket.list_blobs(prefix=out_prefix)
-
-        for blob in blobs:
-            if not blob.name.endswith(".json"):
-                continue
-
-            json_bytes = blob.download_as_bytes()
-            json_data = json.loads(json_bytes)
-
-            # Each JSON file corresponds to an AnnotateFileResponse with 'responses'
-            for response in json_data.get("responses", []):
-                full_annotation = response.get("fullTextAnnotation")
-                if full_annotation and full_annotation.get("text"):
-                    full_text += full_annotation["text"] + "\n"
-
-            # Optional cleanup: delete JSON result files to avoid clutter
-            blob.delete()
-
-        if full_text.strip():
-            print("✅ ASYNC PDF OCR successful, text extracted.")
-            return full_text
-        else:
-            print("⚠️ ASYNC PDF OCR executed but found no text.")
-            return "ERROR: ASYNC PDF OCR executed but found no text."
-
-    except Exception as e:
-        print(f"❌ Error reading OCR results or cleaning up: {e}")
-        traceback.print_exc()
-        return f"ERROR: Error processing OCR output: {e}"
-
-
-def extract_content(blob_bytes, blob_name, full_gcs_path):
-    """
-    Extracts text content from document bytes.
-
-    - PDF files are routed to the asynchronous Vision API OCR (detect_text_gcs_async).
-    - DOCX files use the docx library.
-    - Other files are treated as plain text.
-    """
-
-    blob_name_lower = blob_name.lower()
-    prefix = "gs://" + BUCKET_NAME + "/"
-    gcs_uri = prefix + full_gcs_path
-
-    # Check for PDF
-    if blob_name_lower.endswith('.pdf'):
-        # NEW LOGIC: Use ASYNCHRONOUS Vision OCR for all PDFs
-        # (This handles both scanned images and selectable text robustly)
-
-        # Create a unique temporary path for this job's output
-        job_id = f"ocr_job_{os.path.basename(full_gcs_path)}_{int(time.time())}"
-        gcs_destination_uri = GCS_OCR_OUTPUT_PATH + job_id + "/"
-
-        # Call the async OCR function defined in step 2
-        try:
-            content = detect_text_gcs_async(gcs_uri, gcs_destination_uri)
-            return content
-        except NameError:
-            # Fallback if the function is not defined, useful for debugging
-            return "ERROR: detect_text_gcs_async function is not defined."
-
-    # Check for DOCX
-    elif blob_name_lower.endswith('.docx'):
-        text = ""
-        try:
-            document = Document(io.BytesIO(blob_bytes))
-            for paragraph in document.paragraphs:
-                text += paragraph.text + "\n"
-            return text.strip()
-        except Exception as e:
-            return f"ERROR: Could not read DOCX content: {e}"
-
-    # Handle other files as plain text (TXT, CSV, etc.)
-    try:
-        # We assume the bytes are UTF-8 encoded text
-        return blob_bytes.decode('utf-8', errors='ignore').strip()
-    except Exception as e:
-        return f"ERROR: Could not decode text content for {blob_name}. {e}"
-
-
-# Global limit for concurrency to prevent overwhelming the server/GCS
-MAX_CONCURRENT_DOWNLOADS = 10
-
-
-def get_gcs_files_context(directory_path: str, bucket_name: str, query: str = "") -> List[Dict[str, Any]]:
-    """
-    Fetches, downloads, and processes content from GCS concurrently using a ThreadPoolExecutor.
-    This prevents the request from hitting a 504 Gateway Timeout on large directories.
-    """
-    directory_path = (directory_path or "").strip("/")
-    prefix = f"{directory_path}/" if directory_path else ""
-    file_data: List[Dict[str, Any]] = []
-
-    # 1. Get the list of blobs (metadata only - this is fast)
-    try:
-        bucket = storage_client.bucket(bucket_name)
-        blobs = bucket.list_blobs(prefix=prefix)
-        # Filter for relevant file types immediately
-        blobs_to_process = [
-            blob for blob in blobs
-            if blob.name.endswith(('.docx', '.pdf', '.txt'))
-        ]
-
-    except Exception as e:
-        print(f"ERROR: Failed to list GCS blobs: {e}")
-        return []
-
-    def process_single_blob(blob):
-        """Worker function executed by each thread."""
-        try:
-            # NETWORK I/O: This is the slow part now happening in parallel
-            file_content_bytes = blob.download_as_bytes()
-            content_string = extract_content(file_content_bytes, blob.name, blob.name)
-
-            if content_string.startswith("ERROR:") or not content_string:
-                return None
-
-            # Determine relative name
-            relative_name = blob.name[len(prefix):] if prefix and blob.name.startswith(prefix) else blob.name
-
-            return {
-                "name": relative_name,
-                "full_path": blob.name,
-                "content": content_string[:MAX_CHARS_PER_DOC],  # Assuming MAX_CHARS_PER_DOC is global
-                # Pages structure is often too complex to compute concurrently,
-                # but adding a placeholder for consistency:
-                "pages": [{"page": 1, "lines": content_string.split("\n")}],
-            }
-        except Exception as e:
-            print(f"ERROR processing {blob.name}: {e}")
-            return None
-
-    # 2. Execute file processing concurrently
-    with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_DOWNLOADS) as executor:
-        # Map the worker function over the list of blobs
-        results = executor.map(process_single_blob, blobs_to_process)
-
-        # Collect results, filtering out None (failed/skipped files)
-        file_data = [res for res in results if res is not None]
-
-    return file_data
-
-def initialize_document_cache(directory_path: str):
-    """
-    Builds the document cache by listing, downloading, and extracting content
-    from GCS. This runs ONCE in the background thread.
-    """
-    global DOCUMENT_CACHE, gcs_bucket, CACHE_STATUS, cache_lock
-
-    if gcs_bucket is None:
-        with cache_lock:
-            CACHE_STATUS = "FAILED"
-            print("CACHE-INIT: Failed to run because gcs_bucket is None.")
-        return
-
-    print(f"CACHE-INIT: Starting background cache process for prefix: {directory_path}...")
-    cache_start_time = time.time()
-    temp_cache = {}
-
-    try:
-        prefix = directory_path.strip("/")
-        if prefix: prefix += "/"
-
-        # This list_blobs call is a common place for the thread to crash
-        blobs = gcs_bucket.list_blobs(prefix=prefix)
-
-        for blob in blobs:
-            # We keep the file-level error handling to prevent the loop from aborting
-            try:
-                if blob.size == 0 or blob.name.endswith('/'): continue
-
-                blob_bytes = blob.download_as_bytes()
-                # Assuming extract_content3 is robust enough for your file types
-                extracted_text = extract_content3(blob_bytes, blob.name)
-
-                if extracted_text and not extracted_text.startswith("ERROR:"):
-                    temp_cache[blob.name] = {
-                        "filename": os.path.basename(blob.name),
-                        "full_path": blob.name,
-                        "content": extracted_text,
-                    }
-
-            except Exception as dl_e:
-                # Log the error and move to the next file
-                print(f"❌ ERROR processing file {blob.name}: {dl_e}")
-
-        # --- CRITICAL SUCCESS BLOCK ---
-        with cache_lock:
-            DOCUMENT_CACHE = temp_cache
-            # Set to READY even if empty, to ensure the state machine moves forward
-            CACHE_STATUS = "READY"
-            cache_time = round(time.time() - cache_start_time, 2)
-            print(f"CACHE-INIT: SUCCESS. Status: READY with {len(temp_cache)} files in {cache_time}s.")
-
-    except Exception as e:
-        # --- CRITICAL FAILURE BLOCK ---
-        print(f"CACHE-INIT: CATASTROPHIC ERROR (Bucket list failed): {e}")
-        traceback.print_exc()
-        with cache_lock:
-            CACHE_STATUS = "FAILED"
-
-
-# ==============================================================================
-# --- MOCK & PLACEHOLDER FUNCTIONS ---
-# NOTE: Replace these with your actual implementations
-# ==============================================================================
-
-# ==============================================================================
-# --- REVISED SEARCH FUNCTION ---
-# ==============================================================================
-
-def get_gcs_files_context_cache(directory_path: str, bucket_name: str, query: str = "") -> List[Dict[str, Any]]:
-    """
-    Simple non-AI keyword search with in-memory caching for the GCS context
-    to avoid redundant file listing/downloading on the same instance.
-    """
-    # 1. FIX: Added fallback_cache_lock to global scope
-    global LAST_FALLBACK_PATH, GCS_FALLBACK_CACHE, BUCKET_NAME, fallback_cache_lock
-
-    # 2. Strip the directory path for consistent comparison
-    cleaned_path = directory_path.strip("/")
-
-    # 3. Check the instance-level cache
-    with fallback_cache_lock:
-        if cleaned_path == LAST_FALLBACK_PATH and GCS_FALLBACK_CACHE:
-            # CACHE HIT: FIX 2: Create a copy of the list before releasing the lock
-            documents = list(GCS_FALLBACK_CACHE)
-            print(f"CACHE-FALLBACK: Hit for {cleaned_path}. Skipping GCS fetch.")
-        else:
-            # CACHE MISS: Must fetch the data from GCS
-            print(f"CACHE-FALLBACK: Miss for {cleaned_path}. Fetching from GCS.")
-
-            # 4. Fetch from GCS (Slow operation)
-            fetched_documents = get_gcs_files_context(cleaned_path, BUCKET_NAME, query)
-
-            # 5. Update the global fallback cache and create local copy
-            LAST_FALLBACK_PATH = cleaned_path
-            GCS_FALLBACK_CACHE = fetched_documents
-            documents = fetched_documents  # This reference is safe as the lock is about to be released
-
-        return documents
 
 def simple_keyword_search(query: str,
                           directory_path: str = "",
@@ -485,7 +64,7 @@ def simple_keyword_search(query: str,
             "details": f"No usable documents found in '{directory_path}'.",
             "matches": []
         }
-
+    debug_str = ""
     # Split query into separate words
     words = [w.strip() for w in query.split() if w.strip()]
     if not words:
@@ -566,7 +145,7 @@ def simple_keyword_search(query: str,
             })
 
     return {
-        "debug": "",
+        "debug": debug_str,
         "status": "ok",
         "query": query,
         "directory_path": directory_path,
@@ -577,59 +156,6 @@ def simple_keyword_search(query: str,
     }
 
 
-def get_filtered_context_from_cache(query: str, directory_path: str):
-    """
-    Performs chunking and keyword filtering on the DOCUMENT_CACHE to find the
-    most relevant, small context snippets for RAG.
-
-    Returns:
-        tuple: (document_context_string, list_of_sources)
-    """
-    global DOCUMENT_CACHE
-
-    all_chunks = []
-    prefix_to_match = directory_path.strip('/') + '/' if directory_path else ''
-
-    # a. Extract all relevant content and chunk it (using fixed size for efficiency)
-    CHUNK_SIZE = 500
-    for full_path, doc_data in DOCUMENT_CACHE.items():
-        # Ensure the file belongs to the current directory and has content
-        if full_path.startswith(prefix_to_match) and doc_data.get('content'):
-
-            content = doc_data['content']
-
-            # Fixed-size chunker for aggressive token reduction
-            for i in range(0, len(content), CHUNK_SIZE):
-                chunk_text = content[i:i + CHUNK_SIZE].strip()
-                if chunk_text:
-                    all_chunks.append({
-                        "text": chunk_text,
-                        "source": doc_data["filename"],
-                    })
-
-    # b. Simple keyword matching to find the most relevant chunks
-    relevant_chunks = []
-    query_keywords = set(query.lower().split())
-
-    for chunk in all_chunks:
-        # Check if any query word is present in the chunk
-        if any(keyword in chunk['text'].lower() for keyword in query_keywords):
-            relevant_chunks.append(chunk)
-
-    # Limit to the top X chunks (CRITICAL for speed)
-    MAX_RAG_CHUNKS = 10
-    top_chunks = relevant_chunks[:MAX_RAG_CHUNKS]
-
-    # c. Build the final, filtered context string and source list
-    document_context = ""
-    sources = set()
-
-    for chunk in top_chunks:
-        document_context += f"--- Source: {chunk['source']} ---\n{chunk['text']}\n\n"
-        sources.add(chunk['source'])
-
-    return document_context, list(sources)
-
 def perform_search(query: str, directory_path: str = ""):
     """
     Performs the RAG search, now using the cache and context filtering
@@ -637,6 +163,7 @@ def perform_search(query: str, directory_path: str = ""):
     """
     global CACHE_STATUS, cache_lock
     timer = time.time()  # Start timer
+    gemini_client = get_gemini_client_instance()
 
     if not gemini_client:
         return {"status": "Fallback", "details": "Gemini client not initialized. Check API Key."}
@@ -759,7 +286,7 @@ def start_cache_thread(directory_path: str):
             cache_thread = threading.Thread(
                 target=initialize_document_cache,
                 args=(directory_path,),
-                daemon=True
+                daemon=False
             )
             cache_thread.start()
             print("START-CACHE: Thread launched successfully.")
@@ -775,6 +302,25 @@ if not initialize_all_clients():
     print("LOG: Request failed - Service initialization failed. Check server logs for IAM/API Key errors.")
 
 timer0 = time.time()
+@app.route('/cache_status', methods=['GET'])
+def get_cache_status():
+    """Returns the current status of the document cache."""
+
+
+    with cache_lock:
+        current_status = CACHE_STATUS
+        doc_count = len(DOCUMENT_CACHE)
+        cPROCESS_PROGRESS = PROCESS_PROGRESS
+        cGLOBAL_CACHE_PROGRESS = GLOBAL_CACHE_PROGRESS
+
+    status_data = {
+        "status": current_status,
+        "document_count": doc_count,
+        "time_since_app_start_s": round(time.time() - timer1, 2),
+        "cache": cGLOBAL_CACHE_PROGRESS,
+        "process": cPROCESS_PROGRESS
+    }
+    return jsonify(status_data)
 
 
 @app.route('/simple_search', methods=['POST'])
@@ -782,6 +328,7 @@ timer0 = time.time()
 
 def simple_search_endpoint():
     # 1. Ensure the cache thread is started non-blocking (if needed)
+    global timer1
     start_cache_thread("")
 
     timer1 = time.time()
@@ -822,7 +369,7 @@ def simple_search_endpoint():
                 show_mode=show_mode
             )
 
-            time_stamp += f"{round(100 * (time.time() - timer0)) / 100} sec "
+            time_stamp += f"{round(100 * (time.time() - timer1)) / 100} sec "
             time_stamp += f" new simple_keyword_search={round(100 * (time.time() - timer1)) / 100},"
             time_stamp += CACHE_STATUS
 
@@ -853,7 +400,7 @@ def simple_search_endpoint():
 
 @app.route('/search', methods=['POST'])
 def search_endpoint():
-
+    start_cache_thread("")
     data = request.get_json(silent=True)
 
     if data is None:

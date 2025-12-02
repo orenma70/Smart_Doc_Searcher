@@ -27,3 +27,15 @@ def read_setup(key_name, config_file="setup.txt"):
 
     # If the loop finishes without finding the key
     return None
+
+
+BUCKET_NAME=read_setup("BUCKET_NAME")
+GCS_OCR_OUTPUT_PATH = "gs://" + BUCKET_NAME + "/vision_ocr_output/"
+
+API_main=read_setup("API_main")
+API_search_url = API_main + read_setup("API_search_url")
+API_simple_search_url = API_main + read_setup("API_simple_search_url")
+API_start_cache_url = API_main + read_setup("API_start_cache_url")
+API_cache_status_url = API_main + read_setup("API_cache_status_url")
+
+CLIENT_PREFIX_TO_STRIP=read_setup("CLIENT_PREFIX_TO_STRIP")

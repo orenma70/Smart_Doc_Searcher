@@ -22,13 +22,13 @@ import mimetypes
 from dotenv import load_dotenv
 import time
 import shutil
-
+import threading
 from google import genai
 from google.genai.errors import APIError
 from google.genai import types
 import fitz  # PyMuPDF
 import tempfile
-
+#import search_core
 
 # --- CONCEPTS (These would be filled by your UI state) ---
 # Imagine these variables capture the user's selection from radio buttons or checkboxes.
@@ -63,11 +63,11 @@ LATIN_LETTER_PATTERN = re.compile(r'[a-zA-Z]')
 sequence_pattern = re.compile(r'\d+')
 LATIN_LETTER_PATTERNnNum = re.compile(r'[a-zA-Z]+|\d+')
 
-from config_reader import read_setup
-API_search_url=read_setup("API_search_url")
-API_simple_search_url=read_setup("API_simple_search_url")
+from config_reader import API_search_url, API_simple_search_url, API_start_cache_url, API_cache_status_url, CLIENT_PREFIX_TO_STRIP
 
-CLIENT_PREFIX_TO_STRIP=read_setup("CLIENT_PREFIX_TO_STRIP")
+
+
+
 
 
 
@@ -132,10 +132,59 @@ def format_simple_search_results(results_data):
     return "\n".join(output_lines)
 
 
-def on_search_button_clicked(self, query, directory_path):
-    # הפונקציה המדויקת ששלחת, בתוספת לוגיקת עיבוד התוצאה.
+def check_cache_status_get():
+    print(f"\n--- 2. Checking Cache Status (GET {API_cache_status_url}) ---")
+
+    # Use requests.get() for status checks
+
 
     try:
+        while True:
+            response = requests.get(API_cache_status_url)
+            response.raise_for_status()
+            status_data = response.json()
+            print(f"Status Check Successful (Status {response.status_code}):")
+            print(json.dumps(status_data, indent=4))
+            print(f"\nCache Status: {status_data.get('status')} | Docs Cached: {status_data.get('document_count')}")
+            cache_value = status_data['cache']
+            process_value = status_data['process']
+            print(f"process_value",process_value)
+            print(f"cache_value", cache_value)
+
+            #self.progressBar.setValue(int(process_value))
+            if process_value > 99: #status_data.get('status') == 'WARMING_UP':
+                break
+            #    print("Waiting a moment for the background thread to finish...")
+            #    self.progressBar.setValue(process_value)
+            #    time.sleep(1)
+            #    check_cache_status_get(self)  # Check again using GET
+            time.sleep(1)
+
+        return process_value
+
+    except requests.exceptions.HTTPError as e:
+        print(f"HTTP Error: {e}")
+    except requests.exceptions.RequestException as e:
+        print(f"Request Error: {e}")
+
+
+def start_monitoring_job():
+    # 1. Start the server-side job (must be non-blocking on the server side!)
+    # ... (requests.post() to the /simple_search_key endpoint) ...
+
+    # 2. Start the local polling thread
+    poll_thread = threading.Thread(
+        target=check_cache_status_get,
+        daemon=True  # Set to True so it automatically stops when the main app exits
+    )
+    poll_thread.start()
+
+def on_search_button_clicked(self, query, directory_path):
+    # הפונקציה המדויקת ששלחת, בתוספת לוגיקת עיבוד התוצאה.
+    #self.search_button.setEnabled(False)
+    #self.progressBar.setValue(0)  # Reset the progress bar
+    try:
+        #start_monitoring_job()
         # 1. שליחת הבקשה ל-Cloud Run API
 
         if self.gemini_radio.isChecked():
@@ -174,7 +223,7 @@ def on_search_button_clicked(self, query, directory_path):
             }
 
         start_time = time.time()
-
+        #result = search_core.simple_search_endpoint()
         response = requests.post(
             url,
             json=payload,
