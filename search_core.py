@@ -255,18 +255,11 @@ def get_cache_status():
     """Returns the current status of the document cache."""
 
 
-    with cache_lock:
-        current_status = CACHE_STATUS
-        doc_count = len(DIRECTORY_CACHE_MAP)
-        cPROCESS_PROGRESS = PROCESS_PROGRESS
-        cGLOBAL_CACHE_PROGRESS = GLOBAL_CACHE_PROGRESS
 
     status_data = {
-        "status": current_status,
-        "document_count": doc_count,
+
         "time_since_app_start_s": round(time.time() - timer1, 2),
-        "cache": cGLOBAL_CACHE_PROGRESS,
-        "process": cPROCESS_PROGRESS
+
     }
     return jsonify(status_data)
 

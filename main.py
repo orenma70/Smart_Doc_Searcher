@@ -29,6 +29,9 @@ from google.genai import types
 import fitz  # PyMuPDF
 import tempfile
 #import search_core
+from search_core import simple_keyword_search
+from document_parsers import extract_text_and_images_from_pdf
+from config_reader import LOCAL_MODE
 
 # --- CONCEPTS (These would be filled by your UI state) ---
 # Imagine these variables capture the user's selection from radio buttons or checkboxes.
@@ -173,8 +176,7 @@ def start_monitoring_job():
     # ... (requests.post() to the /simple_search_key endpoint) ...
 
     # 2. Start the local polling thread
-    poll_thread = threading.Thread(
-        target=check_cache_status_get,
+    poll_thread = threading.Thread(       target=check_cache_status_get,
         daemon=True  # Set to True so it automatically stops when the main app exits
     )
     poll_thread.start()
@@ -223,12 +225,16 @@ def on_search_button_clicked(self, query, directory_path):
             }
 
         start_time = time.time()
-        #result = search_core.simple_search_endpoint()
-        response = requests.post(
-            url,
-            json=payload,
-            headers={'Content-Type': 'application/json'}
-        )
+        if LOCAL_MODE=="True":
+            results_data = simple_keyword_search(query, directory_path, str1_mode, str2_mode, str3_mode)
+            formatted_output = format_simple_search_results(results_data)
+            return formatted_output
+        else:
+            response = requests.post(
+                url,
+                json=payload,
+                headers={'Content-Type': 'application/json'}
+            )
         # --- 2. מדידת זמן: התחלה ---
 
         end_time = time.time()
@@ -297,82 +303,6 @@ def on_search_button_clicked(self, query, directory_path):
 
         # הצגת הודעה קריטית למשתמש
         QtWidgets.QMessageBox.critical(self, "שגיאה", error_message)
-
-def convert_pdf_page_to_pixmap(page, page_number: int):
-    """
-    Converts a single PDF page to a PNG byte string (pixmap)
-    which can be used by PIL or sent to Gemini.
-    """
-    try:
-        # Open the PDF document
-
-
-        # Define rendering resolution (e.g., 300 DPI)
-        zoom = 300 / 72.0
-        matrix = fitz.Matrix(zoom, zoom)
-
-        # Convert page to a pixmap object (contains image data)
-        pix = page.get_pixmap(matrix=matrix)
-
-        # --- FIX IS HERE ---
-        # 1. Ensure the colorspace is RGB (Crucial for robust PNG conversion)
-        if pix.n > 4:  # check if the number of components is > 4
-            pix = fitz.Pixmap(fitz.csRGB, pix)
-
-        # 2. Get the raw image data as PNG bytes using the save() method
-        #    and reading the bytes back, or by using a dedicated method
-
-        # Method A: Using a dedicated method for PNG bytes (Older fitz)
-        # Note: This might still raise an error, depending on your exact version.
-        png_bytes = pix.tobytes()
-
-
-        print(f"✅ Successfully created PNG data for page {page_number} using PyMuPDF.")
-        return png_bytes
-
-    except Exception as e:
-        print(f"❌ Error converting page with PyMuPDF: {e}")
-        return None
-
-
-# To send to Gemini, you would use:
-# image_bytes = convert_pdf_page_to_pixmap(pdf_path, 4)
-# client.models.generate_content(contents=[{"mime_type": "image/png", "data": image_bytes}, question])
-
-def convert_pdf_page_to_image(pdf_path: str, page_number: int, poppler_path: str = None) -> Image.Image:
-    """
-    Converts a single page of a PDF to a PIL Image object.
-
-    Args:
-        pdf_path: The full path to the PDF file.
-        page_number: The 1-based index of the page to convert (e.g., 1 for the first page).
-        poppler_path: Optional path to the Poppler 'bin' directory if not in system PATH.
-
-    Returns:
-        A PIL Image object of the page, or None on failure.
-    """
-    if not os.path.exists(pdf_path):
-        print(f"❌ Error: PDF file not found at {pdf_path}.")
-        return None
-
-    doc = None
-    try:
-        doc = fitz.open(pdf_path)
-
-        # fitz uses 0-based indexing, so load page_number - 1
-        page = doc.load_page(page_number - 1)
-
-        # get_images() returns a list of image objects found on the page.
-        # This list includes raster images that might contain scanned text.
-        image_list = page.get_images(full=True)
-
-        if len(image_list) > 0:
-            return convert_pdf_page_to_pixmap(page, page_number)
-        else:
-            return None
-    finally:
-        if doc:
-            doc.close()
 
 
 def should_skip_file(filename: str) -> bool:
@@ -543,63 +473,7 @@ def extract_docx_content(docx_path: str, question: str):
         # 5. Return the result (This must be the last line inside the 'with' block)
         return contents_list
 
-def extract_text_and_images_from_pdf(pdf_path: str) -> tuple[str, list]:
-    """
-    Extracts all text from a local PDF file and collects image data for each page.
 
-    Returns:
-        A tuple containing (full_text_string, list_of_image_objects).
-    """
-    try:
-        reader = pypdf.PdfReader(pdf_path)
-        full_text = ""
-        page_images = []  # 👈 1. Initialize an empty list to store the images
-
-        # Iterate over pages (pypdf uses 0-based index)
-        for p_index, page in enumerate(reader.pages):
-            page_number = p_index + 1  # Convert to 1-based index for your converter function
-
-            # 1. Extract Text
-            full_text += page.extract_text()
-
-            # 2. Extract Image Data for this page
-            page_image = convert_pdf_page_to_image(pdf_path, page_number)
-
-            # 3. Save the Image if the conversion was successful
-            if page_image is not None:
-                # Append the image object (PIL.Image or bytes) to the list
-                page_images.append(page_image)
-            else:
-                # Optional: Log which page failed to convert
-                print(f"⚠️ Warning: Image conversion failed for page {page_number}. Skipping image.")
-
-        # Return both the text and the list of images
-        return full_text, page_images
-
-    except Exception as e:
-        print(f"❌ Error during PDF processing: {e}")
-        return "", []
-
-
-# --- Example Usage ---
-# full_doc_text, image_list = extract_text_and_images_from_pdf("my_scanned_document.pdf")
-# print(f"Extracted {len(full_doc_text.split())} words and {len(image_list)} images.")
-# Assuming you have the image data loaded into a variable named 'page_image_data'
-
-'''
-contents = [
-    # 1. The image data (the scanned page)
-    page_image_data,
-
-    # 2. The text prompt containing the instructions and the question
-    "DOCUMENT CONTEXT: Use the following image to answer the question below. QUESTION: what is the father's name"
-]
-
-response = client.models.generate_content(
-    model='gemini-2.5-flash',
-    contents=contents
-)
-'''
 
 def ask_gemini_with_context(context: str, question: str):
     """Asks Gemini a question using the PDF text as context."""
@@ -1446,6 +1320,9 @@ class SearchApp(QtWidgets.QWidget):
         total_found = 0
 
         count = 0
+
+
+
 
 
         for root, _, files in os.walk(folder):

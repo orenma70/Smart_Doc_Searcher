@@ -1,11 +1,16 @@
 
 import io
 import re
+import os
 from docx import Document
 import traceback
 from pypdf import PdfReader
 from pdfminer.high_level import extract_text_to_fp
-
+import fitz  # PyMuPDF
+from docx import Document
+#   from PyPDF2 import PdfReader
+import pypdf
+from PIL import Image # Used to handle the image object
 
 def find_paragraph_position_in_pages(paragraph_text: str, pages):
     """
@@ -298,3 +303,123 @@ def extract_content3(blob_bytes, full_gcs_path):
         extracted_text = blob_bytes.decode('utf-8')
 
     return extracted_text
+
+
+def convert_pdf_page_to_pixmap(page, page_number: int):
+    """
+    Converts a single PDF page to a PNG byte string (pixmap)
+    which can be used by PIL or sent to Gemini.
+    """
+    try:
+        # Open the PDF document
+
+
+        # Define rendering resolution (e.g., 300 DPI)
+        zoom = 300 / 72.0
+        matrix = fitz.Matrix(zoom, zoom)
+
+        # Convert page to a pixmap object (contains image data)
+        pix = page.get_pixmap(matrix=matrix)
+
+        # --- FIX IS HERE ---
+        # 1. Ensure the colorspace is RGB (Crucial for robust PNG conversion)
+        if pix.n > 4:  # check if the number of components is > 4
+            pix = fitz.Pixmap(fitz.csRGB, pix)
+
+        # 2. Get the raw image data as PNG bytes using the save() method
+        #    and reading the bytes back, or by using a dedicated method
+
+        # Method A: Using a dedicated method for PNG bytes (Older fitz)
+        # Note: This might still raise an error, depending on your exact version.
+        png_bytes = pix.tobytes()
+
+
+        print(f"✅ Successfully created PNG data for page {page_number} using PyMuPDF.")
+        return png_bytes
+
+    except Exception as e:
+        print(f"❌ Error converting page with PyMuPDF: {e}")
+        return None
+
+
+# To send to Gemini, you would use:
+# image_bytes = convert_pdf_page_to_pixmap(pdf_path, 4)
+# client.models.generate_content(contents=[{"mime_type": "image/png", "data": image_bytes}, question])
+
+
+
+def convert_pdf_page_to_image(pdf_path: str, page_number: int, poppler_path: str = None) -> Image.Image:
+    """
+    Converts a single page of a PDF to a PIL Image object.
+
+    Args:
+        pdf_path: The full path to the PDF file.
+        page_number: The 1-based index of the page to convert (e.g., 1 for the first page).
+        poppler_path: Optional path to the Poppler 'bin' directory if not in system PATH.
+
+    Returns:
+        A PIL Image object of the page, or None on failure.
+    """
+    if not os.path.exists(pdf_path):
+        print(f"❌ Error: PDF file not found at {pdf_path}.")
+        return None
+
+    doc = None
+    try:
+        doc = fitz.open(pdf_path)
+
+        # fitz uses 0-based indexing, so load page_number - 1
+        page = doc.load_page(page_number - 1)
+
+        # get_images() returns a list of image objects found on the page.
+        # This list includes raster images that might contain scanned text.
+        image_list = page.get_images(full=True)
+
+        if len(image_list) > 0:
+            return convert_pdf_page_to_pixmap(page, page_number)
+        else:
+            return None
+    finally:
+        if doc:
+            doc.close()
+
+
+
+def extract_text_and_images_from_pdf(pdf_path: str) -> tuple[str, list]:
+    """
+    Extracts all text from a local PDF file and collects image data for each page.
+
+    Returns:
+        A tuple containing (full_text_string, list_of_image_objects).
+    """
+    try:
+        reader = pypdf.PdfReader(pdf_path)
+        full_text = ""
+        page_images = []  # 👈 1. Initialize an empty list to store the images
+
+        # Iterate over pages (pypdf uses 0-based index)
+        for p_index, page in enumerate(reader.pages):
+            page_number = p_index + 1  # Convert to 1-based index for your converter function
+
+            # 1. Extract Text
+            full_text += page.extract_text()
+
+            # 2. Extract Image Data for this page
+            page_image = convert_pdf_page_to_image(pdf_path, page_number)
+
+            # 3. Save the Image if the conversion was successful
+            if page_image is not None:
+                # Append the image object (PIL.Image or bytes) to the list
+                page_images.append(page_image)
+            else:
+                # Optional: Log which page failed to convert
+                print(f"⚠️ Warning: Image conversion failed for page {page_number}. Skipping image.")
+
+        # Return both the text and the list of images
+        return full_text, page_images
+
+    except Exception as e:
+        print(f"❌ Error during PDF processing: {e}")
+        return "", []
+
+

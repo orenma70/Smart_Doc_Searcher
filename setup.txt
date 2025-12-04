@@ -3,15 +3,10 @@
 # ... (משתנים אחרים כמו BUCKET_NAME)
 BUCKET_NAME=oren-smart-search-docs-1205
 CLIENT_PREFIX_TO_STRIP=C:/a/מצרפי
+LOCAL_MODE=False
 
 # כתובות ה-API של Cloud Run
-#Base_url=https://smart-doc-searcher-api-v9-359127107055.us-central1.run.app
-#API_search_url=f"{Base_url}/search"
-#API_simple_search_url=f"{Base_url}/simple_search"
-#API_start_cache_url=f"{Base_url}/start_cache"
-#API_cache_status_url=f"{Base_url}/cache_status"
-
-API_main=https://smart-doc-searcher-api-v9-359127107055.us-central1.run.app/
+API_main=https://smart-doc-searcher-api-v10-359127107055.us-central1.run.app/
 
 API_search_url=search
 API_simple_search_url=simple_search	

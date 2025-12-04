@@ -8,11 +8,21 @@ from google.cloud import vision_v1 as vision
 import traceback
 from document_parsers import extract_content3
 from config_reader import GCS_OCR_OUTPUT_PATH
+from config_reader import CLIENT_PREFIX_TO_STRIP
+from config_reader import LOCAL_MODE
+
+from pathlib import Path
 import threading
 from docx import Document
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 import json
+import fitz  # PyMuPDF
+from PIL import Image # Used to handle the image object
+from docx import Document
+import pypdf
+from document_parsers import extract_text_and_images_from_pdf
+
 # --- Global Client Variables (Set to None for Lazy Loading) ---
 storage_client = None
 vision_client = None
@@ -23,6 +33,7 @@ gcs_bucket = None     # <-- NEW: Store the GCS Bucket object once
 
 
 MAX_CHARS_PER_DOC = 100000
+LOCAL_ROOT_PATH = CLIENT_PREFIX_TO_STRIP # CHANGE THIS to your root folder!
 
 # In search_utilities.py (UPDATED GLOBALS)
 # --- Global Shared State for Caching ---
@@ -32,37 +43,180 @@ DIRECTORY_CACHE_MAP: Dict[str, List[Dict]] = {}
 cache_lock = threading.Lock() # Use this lock for thread-safe access to the map
 
 # The existing get_gcs_files_context function is used below (assuming it's here)
+# In search_utilities.py
 
-def get_documents_for_path(directory_path: str) -> List[Dict[str, Any]]:
+
+
+def get_hd_files_context(directory_path: str, local_root: str) -> List[Dict[str, Any]]:
     """
-    Retrieves document context for a path. Fetches from GCS only if not in cache.
-    The returned list contains objects: [{"name": str, "full_path": str, "content": str, ...}]
+    Simulates GCS file fetching by recursively reading files from the local hard drive.
+
+    Args:
+        directory_path: The path requested by the user (e.g., 'archive/2025').
+        local_root: The physical root directory on the local disk.
+
+    Returns:
+        A list of document dictionaries in the same format as the GCS fetch.
+    """
+
+    # 1. Calculate the full physical path to start the search
+    # directory_path (e.g., 'archive/2025') is appended to the local root
+    search_root = Path(local_root) / directory_path.strip("/")
+
+    if not search_root.is_dir():
+        print(f"ERROR: Local search directory not found: {search_root}")
+        return []
+
+    documents_list = []
+
+    # 2. Use os.walk for recursive file listing (simulating GCS recursion)
+    # os.walk yields (root, dirs, files) for each directory
+    for root, _, files in os.walk(search_root):
+        root_path = Path(root)
+
+        for file_name in files:
+            full_file_path = (root_path / file_name)
+
+            # 3. CRITICAL: Get the path relative to the LOCAL_ROOT_PATH
+            # This ensures the 'full_path' key matches the GCS/Cache format (e.g., 'archive/2025/doc.txt')
+            try:
+                # Use .as_posix() to ensure forward slashes, even on Windows
+                relative_path_for_cache = full_file_path.relative_to(local_root).as_posix()
+            except ValueError:
+                # Should not happen if paths are correct, but handles files outside the root
+                continue
+
+                # 4. Read File Content (Equivalent to GCS blob download)
+            # You would use your real file parsing logic here (PDF, DOCX, etc.)
+            # For simplicity, we assume text files for debugging.
+            try:
+                # IMPORTANT: Use 'rb' (read binary) for compatibility if you later parse binary files
+                # like PDFs or DOCX, then process content inside your actual parser.
+                # For basic text reading:
+                file_ext = full_file_path.suffix.lower()
+                content = ""
+
+                if file_ext == '.pdf':
+                    content = extract_text_and_images_from_pdf(str(full_file_path))
+                    content = content[0]
+                elif file_ext in ['.txt', '.csv']:
+                    # Read text files normally
+                    with open(full_file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read()
+                elif file_ext in ['.docx', '.pptx']:
+                    content = ""
+                    doc1 = Document(str(full_file_path))
+                    for paragraph in doc1.paragraphs:
+                        content += paragraph.text + "\n"
+                    content=content.strip()
+
+
+                else:
+                    content = ""  # Skip unsupported files
+
+                documents_list.append({
+                    "name": file_name,
+                    "full_path": relative_path_for_cache.lower(),  # Store as lowercase for cache filter safety
+                    "content": content,
+                    "source": f"Local HD: {relative_path_for_cache}",
+                    "pages": [{"page": 1, "lines": content.split("\n")}]
+                    # You may include more metadata (like size, last modified) here
+                })
+            except Exception as e:
+                # Log issues reading specific files
+                print(f"Warning: Could not process file {full_file_path}: {e}")
+
+    return documents_list
+
+
+# In search_utilities.py
+# In search_utilities.py
+
+def put_documents_in_cache(path_key: str, documents: List[Dict[str, Any]]):
+    """Safely adds a list of documents to the global cache under the given key."""
+    global DIRECTORY_CACHE_MAP, cache_lock
+
+    # Ensure the key is fully normalized (lowercase, no slashes)
+    normalized_key = path_key.strip("/").lower()
+
+    with cache_lock:
+        if documents:
+            DIRECTORY_CACHE_MAP[normalized_key] = documents
+            print(f"CACHE-PUT: Stored {len(documents)} documents for '{normalized_key}'.")
+
+def get_documents_from_cache(directory_path: str) -> Optional[List[Dict[str, Any]]]:
+    """
+    Attempts a hierarchy-aware lookup for documents, checking the exact path
+    and then searching parent paths. Returns None on cache miss.
     """
     global DIRECTORY_CACHE_MAP, cache_lock
 
-    # Clean the path for consistent key lookup
-    cleaned_path = directory_path.strip("/")
+    cleaned_path = directory_path.strip("/").lower()
 
-    # 1. READ CHECK (FAST PATH)
     with cache_lock:
+
+        # 1a. EXACT MATCH
         if cleaned_path in DIRECTORY_CACHE_MAP:
-            print(f"CACHE-HIT: Returning cached documents for '{cleaned_path}'.")
-            # Always return a copy for safety
+            print(f"CACHE-GET: Exact hit for '{cleaned_path}'.")
             return list(DIRECTORY_CACHE_MAP[cleaned_path])
 
-    # 2. CACHE MISS (SLOW PATH - Fetch from GCS)
-    print(f"CACHE-MISS: Fetching from GCS for '{cleaned_path}'. This may be slow.")
+        # 1b. PARENT/HIERARCHY MATCH
+        path_segments = cleaned_path.split('/')
+        potential_parent_keys = []
 
-    # Use your existing synchronous GCS fetching function.
-    # NOTE: We pass BUCKET_NAME which is defined in this file.
-    fetched_documents = get_gcs_files_context(cleaned_path, BUCKET_NAME)
+        # Generate parent keys (e.g., 'main_dir/dir1' -> 'main_dir')
+        for i in range(len(path_segments) - 1, 0, -1):
+            key = '/'.join(path_segments[:i])
+            if key:
+                potential_parent_keys.append(key)
+        potential_parent_keys.append("")  # Check the root key
 
-    # 3. WRITE TO CACHE
-    with cache_lock:
-        DIRECTORY_CACHE_MAP[cleaned_path] = fetched_documents
-        print(f"CACHE-WRITE: Stored {len(fetched_documents)} documents for '{cleaned_path}'.")
+        for parent_key in potential_parent_keys:
+            if parent_key in DIRECTORY_CACHE_MAP:
+                print(f"CACHE-GET: Parent hit on '{parent_key}' for '{cleaned_path}'.")
+
+                # --- Filtering ---
+                prefix_with_slash = cleaned_path + '/'
+
+                filtered_documents = [
+                    doc for doc in DIRECTORY_CACHE_MAP[parent_key]
+                    if doc.get('full_path', '').lower().startswith(prefix_with_slash)
+                ]
+
+                if filtered_documents:
+                    return list(filtered_documents)
+
+    # Cache Miss
+    return None
+
+
+def get_documents_for_path(directory_path: str) -> List[Dict[str, Any]]:
+    # 1. Normalize the path
+    # (Ensure your path cleaning logic from the previous step is here!)
+    # ... directory_path normalization code ...
+    cleaned_path = directory_path.strip("/").lower()  # Example of final clean
+
+    # 2. GET from Cache (FAST PATH)
+    cached_docs = get_documents_from_cache(cleaned_path)
+    if cached_docs is not None:
+        return cached_docs
+
+    # 3. CACHE MISS (SLOW PATH)
+    print(f"CACHE-MISS: Fetching from source for '{cleaned_path}'.")
+
+    # Perform the expensive fetch (Local or GCS)
+    if LOCAL_MODE=="True":
+        fetched_documents = get_hd_files_context(cleaned_path, LOCAL_ROOT_PATH)
+    else:
+        fetched_documents = get_gcs_files_context(cleaned_path, BUCKET_NAME)
+
+    # 4. PUT into Cache (Write)
+    if fetched_documents:
+        put_documents_in_cache(cleaned_path, fetched_documents)
 
     return fetched_documents
+
+
 
 def initialize_all_clients():
     """
@@ -344,10 +498,11 @@ def get_gcs_files_context(directory_path: str, bucket_name: str, query: str = ""
 
             # Determine relative name
             relative_name = blob.name[len(prefix):] if prefix and blob.name.startswith(prefix) else blob.name
-
+            normalized_gcs_path = Path(blob.name).as_posix()
+            print(f"full path={normalized_gcs_path}")
             return {
                 "name": relative_name,
-                "full_path": blob.name,
+                "full_path": normalized_gcs_path,
                 "content": content_string[:MAX_CHARS_PER_DOC],  # Assuming MAX_CHARS_PER_DOC is global
                 # Pages structure is often too complex to compute concurrently,
                 # but adding a placeholder for consistency:
