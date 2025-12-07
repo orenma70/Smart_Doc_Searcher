@@ -1,31 +1,23 @@
-import os
 import time
-import re
-import json
-import io
 import traceback  # Ensure this is imported for logging stack traces
 from google.cloud import storage
 from google.cloud import vision_v1 as vision
 from google import genai
 from google.genai import errors
 from flask import Flask, request, jsonify
-#import  pdfplumber
-from docx import Document
-from pypdf import PdfReader
-from typing import List, Dict, Any, Tuple
-import threading
 
 
-from search_utilities import (get_documents_for_path, initialize_all_clients, get_gcs_bucket, get_storage_client_instance,
-                              get_vision_client_instance, get_gemini_client_instance)
-from config_reader import BUCKET_NAME
+
+
+from search_utilities import (get_documents_for_path, initialize_all_clients, get_gemini_client_instance)
+
 
 # ==============================================================================
 # --- GLOBAL STATE FOR FALLBACK CACHING ---
 # ==============================================================================
 
 
-from document_parsers import extract_docx_with_lines, find_all_word_positions_in_pdf, split_into_paragraphs, match_line, highlight_matches_html, find_paragraph_position_in_pages
+from document_parsers import split_into_paragraphs, match_line, highlight_matches_html, find_paragraph_position_in_pages
 # ... existing configurations ...
 
 
@@ -170,7 +162,7 @@ def perform_search(query: str, directory_path: str = ""):
             "debug": f"No relevant context found by keyword pre-filter. Time: {round(time.time() - timer, 2)}s."
         }
     final_prompt_context = documents
-
+    sources_list = []
     document_context = ""
     for doc in documents:
         document_context += f"File: {doc['name']}\nFull Path: {doc['full_path']}\nContent:\n{doc['content']}\n---\n"

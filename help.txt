@@ -1,3 +1,12 @@
+git status
+git add .
+git commit -m "v10.2.0 Arch: improve Implement Path-Based Caching (v10.1.0)."
+git tag v10.2.0
+git push origin v10.2.0
+git push origin main
+
+
+
 restore from version source from cloud
 
 C:\Users\orenm\Dropbox\my_doc\Python\Smart_Doc_Searcher>

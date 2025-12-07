@@ -6,21 +6,16 @@ import time
 from google.cloud import storage
 from google.cloud import vision_v1 as vision
 import traceback
-from document_parsers import extract_content3
 from config_reader import GCS_OCR_OUTPUT_PATH
 from config_reader import CLIENT_PREFIX_TO_STRIP
 from config_reader import LOCAL_MODE
 
 from pathlib import Path
 import threading
-from docx import Document
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Any, Tuple, Optional
 import json
-import fitz  # PyMuPDF
-from PIL import Image # Used to handle the image object
 from docx import Document
-import pypdf
 from document_parsers import extract_text_and_images_from_pdf
 
 # --- Global Client Variables (Set to None for Lazy Loading) ---
@@ -375,7 +370,7 @@ def detect_text_gcs_async(gcs_uri, gcs_destination_uri):
     parts = gcs_destination_uri.replace("gs://", "").split("/", 1)
     out_bucket_name = parts[0]
     out_prefix = parts[1].rstrip("/") + "/"
-
+    print(f"✅ debug2 list_blobs .{out_prefix}")
     try:
         bucket = storage_cli.bucket(out_bucket_name)
         blobs = bucket.list_blobs(prefix=out_prefix)
@@ -473,6 +468,7 @@ def get_gcs_files_context(directory_path: str, bucket_name: str, query: str = ""
     file_data: List[Dict[str, Any]] = []
     storage_client = get_storage_client_instance()
     # 1. Get the list of blobs (metadata only - this is fast)
+    print(f"prefix: debug to list GCS blobs: {prefix}")
     try:
         bucket = storage_client.bucket(bucket_name)
         blobs = bucket.list_blobs(prefix=prefix)

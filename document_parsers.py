@@ -2,7 +2,6 @@
 import io
 import re
 import os
-from docx import Document
 import traceback
 from pypdf import PdfReader
 from pdfminer.high_level import extract_text_to_fp

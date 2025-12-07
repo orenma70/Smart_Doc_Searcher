@@ -31,7 +31,8 @@ import tempfile
 #import search_core
 from search_core import simple_keyword_search
 from document_parsers import extract_text_and_images_from_pdf
-from config_reader import LOCAL_MODE
+from config_reader import LOCAL_MODE, BUCKET_NAME, API_main
+from gcs_path_browser import GCSBrowserDialog
 
 # --- CONCEPTS (These would be filled by your UI state) ---
 # Imagine these variables capture the user's selection from radio buttons or checkboxes.
@@ -66,7 +67,7 @@ LATIN_LETTER_PATTERN = re.compile(r'[a-zA-Z]')
 sequence_pattern = re.compile(r'\d+')
 LATIN_LETTER_PATTERNnNum = re.compile(r'[a-zA-Z]+|\d+')
 
-from config_reader import API_search_url, API_simple_search_url, API_start_cache_url, API_cache_status_url, CLIENT_PREFIX_TO_STRIP
+from config_reader import API_search_url, API_simple_search_url, API_cache_status_url, CLIENT_PREFIX_TO_STRIP
 
 
 
@@ -123,13 +124,14 @@ def format_simple_search_results(results_data):
 
         output_lines.append(f" שורה:  {line}  עמוד: {page}  📄 קובץ: {file_name}  📄 ספריה: {dir_only}   <br>")
 
-        output_lines.append(f" debug:  {results_data.get("debug")}<br>")
+        output_lines.append(f" debug:  {results_data.get("debug")}<br>***********************************************<br>")
         #output_lines.append(f"נתיב מלא: {full_path} <br>")
 
 
         for line in lines:
             output_lines.append(f"   • {line}<br>")
 
+        output_lines.append(f"<br>")
 
 
     return "\n".join(output_lines)
@@ -361,26 +363,6 @@ def display_gemini_result(self, results_area: QtWidgets.QTextEdit, answer: str, 
 
 
 
-def extract_text_from_doc(doc_path: str) -> str:
-    """Extracts text from a local .doc file using textract."""
-    if not os.path.exists(doc_path):
-        print(f"❌ Error: File not found at {doc_path}.")
-        return None
-
-    try:
-        # textract returns bytes, so decode to string
-        text_bytes = textract.process(doc_path)
-        return text_bytes.decode('utf-8')
-
-    except Exception as e:
-        print(f"❌ Error reading .doc file (requires external tool like antiword): {e}")
-        return None
-
-
-
-
-
-
 def extract_text_from_docx(docx_path: str) -> str:
     """Extracts all text from a local .docx file."""
     if not os.path.exists(docx_path):
@@ -566,19 +548,6 @@ def ask_gemini_with_contextNimage(context: str, image_list, question: str):
         print(f"\n❌ API Error: Check your GEMINI_API_KEY and API access. Details: {e}")
     except Exception as e:
         print(f"\n❌ An unexpected error occurred: {e}")
-
-def read_pdf_with_pypdf2(file_path):
-    try:
-        reader = PdfReader(file_path)
-        full_text = ""
-        for page in reader.pages:
-            text = page.extract_text()
-            if text:
-                full_text += text + "\n"
-        return full_text
-    except Exception as e:
-        print(f"Error reading PDF: {e}")
-        return ""
 
 def open_pdf_page(pdf_path, page_number):
     sumatra_path = r"C:\Users\orenm\AppData\Local\SumatraPDF\SumatraPDF.exe"  # change this to your installation
@@ -780,56 +749,6 @@ def docx2pdf_search(path, words, mode='any', search_mode='partial'):
         pass
     return results
 
-def pypdf_search(self, path, words, mode='any', search_mode='partial', read_from_temp=""):
-    results = []
-
-    # extract_hebrew_pdf_fully_corrected(path, "c:\\a\\a.text")
-    try:
-        reader = pypdf.PdfReader(path)
-
-        previous_page_trailer = []
-        for pnum, page in enumerate(reader.pages, start=1):
-
-            context_text = page.extract_text()
-            start_index = 1
-            end_index = 2
-            if paragraph_matches(context_text, words, mode, search_mode):
-                            # Get neighboring lines to form a paragraph
-                    # If both checks pass, format the 3-line context as the result
-
-                    # Descriptive text for the user (Context is still important)
-                    pre = f"<span style='color:blue;'>— עמוד {pnum} — שורות {start_index + 1}-{end_index}</span>"
-
-                    # HTML Link definition (Uses fileonly:// to skip page jump)
-                    path_for_url = path.replace('\\', '/')
-                    fileonly_url = f"file:///{path_for_url}"  # Three slashes for file protocol on Windows
-
-                    # Ensure the custom protocol signal is used if you need to differentiate the link types
-                    fileonly_url = f"fileonly:///{path_for_url}"  # Use three slashes for consistency
-                    file_url_with_page = f"filepage:///{path_for_url}?page={pnum}"
-                    open_link = f"<a href='{file_url_with_page}' style='color:green; text-decoration: none;'>[פתח קובץ]</a>"
-
-                    # Assemble the final HTML paragraph
-                    full_paragraph = (
-                            " ".join([path]) + "  " +
-                            pre + " " + open_link + "<br><br>" +
-                            context_text + "<br>"
-                    )
-
-                    results.append(full_paragraph)
-
-    except:
-        pass
-
-
-    finally:
-        # Delete temp PDF if it was used
-        if read_from_temp and os.path.exists(pdf_path):
-            try:
-                os.remove(pdf_path)
-            except Exception as e:
-                print(f"Error deleting temp PDF: {e}")
-    return results
 
 def pdf_search(self, path, words, mode='any', search_mode='partial', read_from_temp=""):
     results = []
@@ -845,7 +764,6 @@ def pdf_search(self, path, words, mode='any', search_mode='partial', read_from_t
                 return results
         else:
             reader = pdfplumber.open(path)
-            reader2 = pypdf.PdfReader(path)
 
         previous_page_trailer = []
         for pnum, page in enumerate(reader.pages, start=1):
@@ -1017,50 +935,17 @@ def docx_search(path, words, mode='any', search_mode='partial'):
 class SearchApp(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("הדס לוי -  עורך דין - תוכנת חיפוש")
+
+
+        if LOCAL_MODE == "True":
+            self.setWindowTitle(f" Hard Disk הדס לוי -  עורך דין - תוכנת חיפוש")
+        else:
+            self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {API_main}")
+
         self.resize(1700, 1200)
         ui_setup.setup_ui(self)
 
-    def prepare_content_summary(self, folder):
-        summaries = []
 
-        for root, _, files in os.walk(folder):
-
-
-
-            for filename in files:
-
-
-                if filename.startswith('~$'):
-                    continue  # Skip temporary backup files
-                file_path = os.path.join(root, filename)
-                # Handle text files
-                if filename.lower().endswith('.txt'):
-                    try:
-                        with open(file_path, 'r', encoding='utf-8') as f:
-                            content = f.read()
-                            summaries.append(f"{filename}: {content}")
-                    except Exception as e:
-                        print(f"Error reading {file_path}: {e}")
-                # Handle Word documents
-                elif filename.lower().endswith('.docx'):
-                    try:
-                        doc = Document(file_path)
-                        full_text = "\n".join([para.text for para in doc.paragraphs])
-                        summaries.append(f"{filename} (Word): {full_text}")
-                    except Exception as e:
-                        print(f"Error reading {file_path}: {e}")
-                # Handle PDFs
-                elif filename.lower().endswith('.pdf'):
-                    try:
-                        with pdfplumber.open(file_path) as pdf:
-                            #page = pdf.pages[0]
-                            #text = page.extract_text()
-                            text = read_pdf_with_pypdf2(file_path)
-                            summaries.append(f"{filename} (PDF): {text}")
-                    except Exception as e:
-                        print(f"Error reading {file_path}: {e}")
-        return "\n\n".join(summaries)
 
     def handle_chatgpt_mode(self, folder, query):
         # Prepare content from documents
@@ -1224,13 +1109,13 @@ class SearchApp(QtWidgets.QWidget):
                     os.startfile(file_path)
 
             except Exception as e:
-                print(f"Error launching file {resolved_path}: {e}")
+                print(f"Error launching file {file_path}: {e}")
                 QtWidgets.QMessageBox.warning(
                     self, "שגיאה בפתיחת קובץ",
-                    f"לא ניתן לפתוח את הקובץ: {resolved_path}\nשגיאה: {e}"
+                    f"לא ניתן לפתוח את הקובץ: {file_path}\nשגיאה: {e}"
                 )
 
-    # --- END UPDATED METHOD ---
+
 
     def clear_all(self):
         """Clears the search input and, most importantly, the results display area."""
@@ -1283,7 +1168,6 @@ class SearchApp(QtWidgets.QWidget):
             print(f"pre on_search_button_clicked: {latency:.2f} seconds")
 
             answer = on_search_button_clicked(self, query, folder)
-
 
 
             #perform_search(query, directory_path=folder)
@@ -1352,7 +1236,7 @@ class SearchApp(QtWidgets.QWidget):
                             #if doc_text:
                             #    answer = ask_gemini_with_context(doc_text, query)
 
-                            gemini_input_parts = extract_docx_content(path, query)
+                            gemini_input_parts = extract_docx_content(str(path), query)
                             client = genai.Client()
                             response = client.models.generate_content(
                                  model='gemini-2.5-flash',
@@ -1364,7 +1248,7 @@ class SearchApp(QtWidgets.QWidget):
 
 
                         # Example usage (assuming this function is part of a class):
-                            display_gemini_result(self, self.results_area, answer, path)
+                            display_gemini_result(self, self.results_area, answer, str(path))
 
                         else:
                             matches = docx_search(path, words, mode, search_mode)
@@ -1377,16 +1261,16 @@ class SearchApp(QtWidgets.QWidget):
                 elif filename_lower.endswith('.pdf'):
                     try:
 
-
+                        matches =""
                         if search_mode == 'gemini':
-
-                            pdf_text, image_list = extract_text_and_images_from_pdf(path)
+                            answer = ""
+                            pdf_text, image_list = extract_text_and_images_from_pdf(str(path))
                             if image_list:
                                 answer = ask_gemini_with_contextNimage(pdf_text, image_list, query)
                             elif pdf_text:
                                 answer = ask_gemini_with_context(pdf_text, query)
 
-                            display_gemini_result(self, self.results_area, answer, path)
+                            display_gemini_result(self, self.results_area, answer, str(path))
 
 
                         else:
@@ -1414,12 +1298,40 @@ class SearchApp(QtWidgets.QWidget):
         except:
             pass
 
+
+
     def browse_directory(self):
-        dir_path = QtWidgets.QFileDialog.getExistingDirectory(self, "בחר תיקיה", self.dir_edit.text() or "/")
-        # dir_path = RLO + dir_path
-        if dir_path:
-            self.dir_edit.setText(dir_path)
-            self.save_last_dir()
+        """
+        Handles browsing local HD or GCS based on LOCAL_MODE.
+
+        NOTE: 'self' refers to the main application window/widget, allowing it
+        to pass itself as a parent to the dialog.
+        """
+        # Assuming self.dir_edit is a QLineEdit widget used to display the path
+
+
+        if  LOCAL_MODE == "True":
+            initial_path = self.dir_edit.text()
+            dir_path = QtWidgets.QFileDialog.getExistingDirectory(self, "בחר תיקיה", initial_path or "/")
+            # dir_path = RLO + dir_path # Assuming RLO is defined elsewhere
+            if dir_path:
+                self.dir_edit.setText(dir_path)
+                self.save_last_dir()
+        else:
+            # --- GCS BROWSER INTEGRATION ---
+
+            # 1. Use the static method to show the custom dialog
+            #selected_gcs_path = GCSBrowserDialog.get_directory(parent=self, initial_path=BUCKET_NAME+"/גירושין")
+            selected_gcs_path = GCSBrowserDialog.get_directory(parent=self, initial_path='גירושין')
+
+            # 2. Update the main application's path if a selection was made
+            if selected_gcs_path is not None:
+                # We add the bucket name conceptually, or just the path for internal use
+                self.dir_edit.setText(selected_gcs_path)
+                self.save_last_dir()
+
+            # The previous debug printing block has been removed as it is now handled
+            # by the interactive GCSBrowserDialog
 
     def load_last_dir(self):
         try:

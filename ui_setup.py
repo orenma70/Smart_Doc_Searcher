@@ -9,8 +9,8 @@ chat_mode = True
 if isLTR:
     btn_browse_str = "Choose Search Folder"
     tik_str = "Folder --->"
-    dir_edit_alignment_choice = QtCore.Qt.AlignLeft
-
+    dir_edit_alignment_choice = QtCore.Qt.AlignmentFlag.AlignLeft
+    dir_edit_LayoutDirection = QtCore.Qt.LayoutDirection.LeftToRight
     search_btn_str = " Start Search !!"
     label_str = " Enter Search Words -->"
     label_gpt_str = " Ask your question -->"
@@ -33,14 +33,19 @@ if isLTR:
 else:
     btn_browse_str = "בחירת תיקיית חיפוש"
     tik_str = "    תיקיה--->"
-    dir_edit_alignment_choice = QtCore.Qt.AlignRight
+    dir_edit_alignment_choice = QtCore.Qt.AlignmentFlag.AlignRight
+    dir_edit_LayoutDirection = QtCore.Qt.LayoutDirection.RightToLeft
+
+
+
+
 
     search_btn_str = "! לחצן החיפוש !"
     label_str = "  הכנסת מילות חיפוש --->"
     label_gpt_str = " הכנסת השאלה --->"
     #search_input_words_str = "Enter here search words"
     search_input_question_str = "הכנסת השאלה"
-    setText_str =  "חוזה"  #  "מי היא חברת הליסינג?"     "מה גיל הילדים?"    "מי האקטואר?
+    setText_str =  "ללימודי"  #  "מי היא חברת הליסינג?"     "מה גיל הילדים?"    "מי האקטואר?
     clear_btn_str = "! לחצן הניקוי !"
 
     nongemini_radio_str = "  חיפוש מילים  "
@@ -69,6 +74,10 @@ def setup_ui(self):
     self.dir_edit = QtWidgets.QLineEdit()
     self.dir_edit.setFont(font)
     self.dir_edit.setAlignment(dir_edit_alignment_choice)
+    self.dir_edit.setLayoutDirection(dir_edit_LayoutDirection)
+
+
+
 
     self.load_last_dir()
 
