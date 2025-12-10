@@ -6,6 +6,58 @@ from PyQt5 import QtWidgets, QtCore, QtGui
 from config_reader import  BUCKET_NAME
 from search_utilities import get_storage_client
 import time
+import hashlib
+import binascii, base64
+
+
+def md5_of_file(path):
+    """Compute MD5 checksum of a local file."""
+    hash_md5 = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return base64.b64encode(binascii.unhexlify(hash_md5.hexdigest())).decode("utf-8")
+
+def check_sync(local_path, bucket_name, prefix=""):
+    """Compare local files with GCS bucket contents."""
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+
+    # Collect local files
+    local_files = {}
+    for root, _, files in os.walk(local_path):
+        for f in files:
+            if f.startswith("$") or f.startswith("~$"):  # skip hidden/temp files
+                continue
+            full_path = os.path.join(root, f)
+            rel_path = os.path.relpath(full_path, local_path).replace("\\", "/")
+            local_files[rel_path] = md5_of_file(full_path)
+
+    # Collect GCS blobs
+    gcs_files = {}
+    for blob in bucket.list_blobs(prefix=prefix):
+        # GCS md5Hash is base64-encoded; decode to hex
+        name1= blob.name
+        name1 = name1.replace(prefix, "")
+        name1 = name1.rstrip("/")
+        name1 = name1.lstrip("/")
+
+        if blob.md5_hash:
+            gcs_files[name1] = blob.md5_hash
+
+    # Compare sets
+    missing_in_gcs = set(local_files) - set(gcs_files)
+    missing_locally = set(gcs_files) - set(local_files)
+    mismatched = [f for f in local_files if f in gcs_files and local_files[f] != gcs_files[f]]
+    sync1 = not mismatched and not missing_locally and not missing_in_gcs
+
+    return {
+        "missing_in_gcs": missing_in_gcs,
+        "missing_locally": missing_locally,
+        "mismatched": mismatched,
+        "sync!": sync1
+    }
+
 
 
 # ==============================================================================
@@ -13,10 +65,15 @@ import time
 # ==============================================================================
 gcs_client: Optional[storage.Client] = None
 
-def browse_gcs_path(path_prefix: str = "") -> Dict[str, List[str]]:
+def browse_gcs_path(self) -> Dict[str, List[str]]:
     """
     Lists the virtual directories (prefixes) and  (blobs) at a given GCS path.
     """
+    path_prefix = self.current_path
+    # Example usage
+
+
+
 
     path_prefix = f"{path_prefix}"
     timer0 = time.time()
@@ -121,6 +178,7 @@ class GCSBrowserDialog(QtWidgets.QDialog):
         # Initial load
         self.load_directory(self.current_path)
 
+
     def load_directory(self, path: str):
         """Fetches contents from GCS and updates the list widget."""
         self.list_widget.clear()
@@ -130,7 +188,7 @@ class GCSBrowserDialog(QtWidgets.QDialog):
         display_path = self.current_path if self.current_path else " (Root)"
         self.path_label.setText(f"Path: {display_path}/")
 
-        contents = browse_gcs_path(self.current_path)
+        contents = browse_gcs_path(self)
 
         # 1. Add Folders (with folder icon)
         for folder in contents["folders"]:

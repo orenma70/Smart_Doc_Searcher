@@ -13,22 +13,25 @@ from config_reader import LOCAL_MODE
 from pathlib import Path
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Optional
 import json
 from docx import Document
 from document_parsers import extract_text_and_images_from_pdf
 
 # --- Global Client Variables (Set to None for Lazy Loading) ---
-storage_client = None
-vision_client = None
-gemini_client = None
-gcs_bucket = None     # <-- NEW: Store the GCS Bucket object once
+storage_client: Optional[storage.Client] = None
+vision_client: Optional[storage.Client] = None
+gemini_client: Optional[storage.Client] = None
+gcs_bucket: Optional[storage.Client] = None  # <-- NEW: Store the GCS Bucket object once
 
 # --- Global Shared State for Caching ---
 
 
 MAX_CHARS_PER_DOC = 100000
-LOCAL_ROOT_PATH = CLIENT_PREFIX_TO_STRIP # CHANGE THIS to your root folder!
+LOCAL_ROOT_PATH = CLIENT_PREFIX_TO_STRIP  # CHANGE THIS to your root folder!
+MAX_WAIT_SECONDS = 600
+POLL_INTERVAL_SECONDS = 10
+MAX_CONCURRENT_DOWNLOADS = 10
 
 # In search_utilities.py (UPDATED GLOBALS)
 # --- Global Shared State for Caching ---
@@ -36,10 +39,6 @@ LOCAL_ROOT_PATH = CLIENT_PREFIX_TO_STRIP # CHANGE THIS to your root folder!
 # Value: List[Dict] (The document data for that path)
 DIRECTORY_CACHE_MAP: Dict[str, List[Dict]] = {}
 cache_lock = threading.Lock() # Use this lock for thread-safe access to the map
-
-# The existing get_gcs_files_context function is used below (assuming it's here)
-# In search_utilities.py
-
 
 
 def get_hd_files_context(directory_path: str, local_root: str) -> List[Dict[str, Any]]:
@@ -139,6 +138,7 @@ def put_documents_in_cache(path_key: str, documents: List[Dict[str, Any]]):
             DIRECTORY_CACHE_MAP[normalized_key] = documents
             print(f"CACHE-PUT: Stored {len(documents)} documents for '{normalized_key}'.")
 
+
 def get_documents_from_cache(directory_path: str) -> Optional[List[Dict[str, Any]]]:
     """
     Attempts a hierarchy-aware lookup for documents, checking the exact path
@@ -200,7 +200,7 @@ def get_documents_for_path(directory_path: str) -> List[Dict[str, Any]]:
     print(f"CACHE-MISS: Fetching from source for '{cleaned_path}'.")
 
     # Perform the expensive fetch (Local or GCS)
-    if LOCAL_MODE=="True":
+    if LOCAL_MODE == "True":
         fetched_documents = get_hd_files_context(cleaned_path, LOCAL_ROOT_PATH)
     else:
         fetched_documents = get_gcs_files_context(cleaned_path, BUCKET_NAME)
@@ -210,7 +210,6 @@ def get_documents_for_path(directory_path: str) -> List[Dict[str, Any]]:
         put_documents_in_cache(cleaned_path, fetched_documents)
 
     return fetched_documents
-
 
 
 def initialize_all_clients():
@@ -248,7 +247,6 @@ def initialize_all_clients():
             gemini_client is not None and vision_client is not None)
 
 
-
 def get_storage_client():
     """Initializes and returns the Google Cloud Storage client."""
     try:
@@ -261,7 +259,7 @@ def get_storage_client():
 def get_vision_client():
     """Initializes and returns the Google Cloud Vision client."""
     try:
-        #return vision.V1.ImageAnnotatorClient() #vision.ImageAnnotatorClient()
+        # return vision.V1.ImageAnnotatorClient() #vision.ImageAnnotatorClient()
         return vision.ImageAnnotatorClient()
     except Exception as e:
         print(f"FATAL: Could not initialize Vision client. Error: {e}")
@@ -280,6 +278,7 @@ def get_gemini_client():
         print(f"FATAL: Could not initialize Gemini client. Check API Key. Error: {e}")
         return None
 
+
 # Add this function to search_utilities.py
 def get_gcs_bucket():
     """Returns the initialized GCS bucket object, ensuring initialization is attempted."""
@@ -287,7 +286,6 @@ def get_gcs_bucket():
     if gcs_bucket is None:
         initialize_all_clients()
     return gcs_bucket
-
 
 
 # Add this function (or just use get_gcs_bucket logic)
@@ -298,6 +296,7 @@ def get_storage_client_instance():
         initialize_all_clients()
     return storage_client
 
+
 # Add this function
 def get_vision_client_instance():
     """Returns the initialized Vision client object."""
@@ -305,6 +304,7 @@ def get_vision_client_instance():
     if vision_client is None:
         initialize_all_clients()
     return vision_client
+
 
 # Add this function
 def get_gemini_client_instance():
@@ -502,7 +502,7 @@ def get_gcs_files_context(directory_path: str, bucket_name: str, query: str = ""
                 "content": content_string[:MAX_CHARS_PER_DOC],  # Assuming MAX_CHARS_PER_DOC is global
                 # Pages structure is often too complex to compute concurrently,
                 # but adding a placeholder for consistency:
-                "pages": [{"page": 1, "lines": content_string.split("\n")}],
+                "pages": [{"page": 3, "lines": content_string.split("\n")}],
             }
         except Exception as e:
             print(f"ERROR processing {blob.name}: {e}")
@@ -526,4 +526,3 @@ def get_gcs_files_context(directory_path: str, bucket_name: str, query: str = ""
 # ==============================================================================
 # --- REVISED SEARCH FUNCTION ---
 # ==============================================================================
-

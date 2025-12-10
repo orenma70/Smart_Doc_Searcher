@@ -1,12 +1,20 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
 from google.genai import types
-
+from config_reader import LOCAL_MODE, CLIENT_PREFIX_TO_STRIP
 
 Vertic_Flag = True
 isLTR = False # left to right or RTL
 chat_mode = True
 
+
 if isLTR:
+
+    non_cloud_str = " 🖴 HD"
+
+    non_sync_cloud_str = "☁️ Cloud non synchronized ❌"
+    sync_cloud_str = "☁️  Cloud synchronized 🔄"
+
+
     btn_browse_str = "Choose Search Folder"
     tik_str = "Folder --->"
     dir_edit_alignment_choice = QtCore.Qt.AlignmentFlag.AlignLeft
@@ -16,7 +24,7 @@ if isLTR:
     label_gpt_str = " Ask your question -->"
     #search_input_words_str = "Enter here search words"
     setText_str = "default message here"
-    clear_btn_str = "Clear Button"
+    clear_btn_str = "Clear ?"
 
     nongemini_radio_str = " Keyword Matching"  # Semantic Search "
     gemini_radio_str = " Ask Chat "
@@ -26,13 +34,17 @@ if isLTR:
     all_word_search_radio_str = " All Words "
     any_word_search_radio_str = " One word "
 
-    save_btn_str = "Save to file"
+    save_btn_str = "Save 💾"
 
     paragraph_str = " Show in paragraphs "
     line_str = " Show in line "
 else:
-    btn_browse_str = "בחירת תיקיית חיפוש"
-    tik_str = "    תיקיה--->"
+    non_sync_cloud_str = "☁️ ענן לא מסונכרן ❌"
+    sync_cloud_str = "☁️ ענן מסונכרן 🔄"
+    non_cloud_str = " 🖴 כונן"
+
+    btn_browse_str = "בחירת תיקיית 📂 חיפוש"
+    tik_str = "  📂 תיקיה--->"
     dir_edit_alignment_choice = QtCore.Qt.AlignmentFlag.AlignRight
     dir_edit_LayoutDirection = QtCore.Qt.LayoutDirection.RightToLeft
 
@@ -41,12 +53,12 @@ else:
 
 
     search_btn_str = "! לחצן החיפוש !"
-    label_str = "  הכנסת מילות חיפוש --->"
-    label_gpt_str = " הכנסת השאלה --->"
+    label_str = "  הכנסת מילות חיפוש ✏️-->"
+    label_gpt_str = " הכנסת השאלה ✏️-->"
     #search_input_words_str = "Enter here search words"
     search_input_question_str = "הכנסת השאלה"
     setText_str =  "ללימודי"  #  "מי היא חברת הליסינג?"     "מה גיל הילדים?"    "מי האקטואר?
-    clear_btn_str = "! לחצן הניקוי !"
+    clear_btn_str = " ניקוי 🗑️ "
 
     nongemini_radio_str = "  חיפוש מילים  "
     gemini_radio_str = " שאל את הצ'אט "
@@ -59,7 +71,7 @@ else:
     paragraph_str = " הצגת כל הפסקה "
     line_str = " הצגת שורה "
 
-    save_btn_str = "שמור לקובץ"
+    save_btn_str = "שמירה 💾"
 
 def setup_ui(self):
     font = QtGui.QFont()
@@ -100,11 +112,63 @@ def setup_ui(self):
 
     tik = QtWidgets.QLabel(tik_str)
     tik.setFont(font)
+
+    search_layout = QtWidgets.QHBoxLayout()
+    self.save_btn = QtWidgets.QPushButton(save_btn_str)
+    self.save_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: black;
+                    color: white;
+                    border: 6px solid #ff0000;
+                    border-radius: 4px;
+                    padding: 6px 12px;
+                }
+                QPushButton:hover {
+                    background-color: #0069d9;
+                    border-color: #ff0000;
+                }
+            """)
+    self.save_btn.setFont(font)
+    self.save_btn.clicked.connect(self.save_all2file)
+
+    self.clear_btn = QtWidgets.QPushButton(clear_btn_str)
+    self.clear_btn.setStyleSheet("""
+            QPushButton {
+                background-color: black;
+                color: white;
+                border: 6px solid #ff0000;
+                border-radius: 4px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background-color: #0069d9;
+                border-color: #ff0000;
+            }
+        """)
+    self.clear_btn.setFont(font)
+    self.clear_btn.clicked.connect(self.clear_all)
+
+    if LOCAL_MODE == "True":
+        self.display_root = QtWidgets.QLabel(CLIENT_PREFIX_TO_STRIP)
+    else:
+        self.display_root = QtWidgets.QLabel("Bucket")
+
+    self.display_root.setFont(font)
+
+
     if isLTR:
         dir_layout.addWidget(btn_browse)
         dir_layout.addWidget(tik)
         dir_layout.addWidget(self.dir_edit)
+        dir_layout.addWidget(self.display_root)
+        dir_layout.addSpacing(200)
+        dir_layout.addWidget(self.clear_btn)
+        dir_layout.addWidget(self.save_btn)
     else:
+        dir_layout.addWidget(self.save_btn)
+        dir_layout.addWidget(self.clear_btn)
+        dir_layout.addSpacing(200)
+        dir_layout.addWidget(self.display_root)
         dir_layout.addWidget(self.dir_edit)
         dir_layout.addWidget(tik)
         dir_layout.addWidget(btn_browse)
@@ -112,7 +176,7 @@ def setup_ui(self):
     layout.addLayout(dir_layout)
 
     # Search query input
-    search_layout = QtWidgets.QHBoxLayout()
+
     self.search_input = QtWidgets.QLineEdit()
     self.search_input.setFont(font)
 
@@ -140,63 +204,70 @@ def setup_ui(self):
     self.label.setFont(font)
 
 
+    self.cloud_gemini_radio = QtWidgets.QCheckBox(non_sync_cloud_str)
 
 
+    self.cloud_gemini_radio.setStyleSheet("""
+                QCheckBox {
+                    background-color: #f0f0f0; /* Light gray background for the frame */
+                    color: #0000FF; /* Optional: set text color */
+                    font-size: 20pt;
+                    font-weight: bold;
+                    padding: 5px; /* Optional: add internal padding */
+                    border: 6px solid #FF0000;
+                    border-radius: 6px;
+                }
+                QCheckBox::indicator {
+                    width: 25px;
+                    height: 25px;
+                }
+                """)
+
+    self.non_cloud_gemini_radio = QtWidgets.QCheckBox(non_cloud_str)
+
+    self.non_cloud_gemini_radio.setStyleSheet("""
+                    QCheckBox {
+                        background-color: #f0f0f0; /* Light gray background for the frame */
+                        color: #0000FF; /* Optional: set text color */
+                        font-size: 20pt;
+                        font-weight: bold;
+                        padding: 5px; /* Optional: add internal padding */
+                        border: 6px solid #FF0000;
+                        border-radius: 6px;
+                    }
+                    QCheckBox::indicator {
+                        width: 25px;
+                        height: 25px;
+                    }
+                    """)
+
+    #self.non_cloud_gemini_radio.toggled.connect(self.handle_radio_check)
+    self.cloud_gemini_radio.toggled.connect(self.handle_radio_check)
+
+    self.mode_group_cloud = QtWidgets.QButtonGroup()
+    self.mode_group_cloud.addButton(self.cloud_gemini_radio)
+    self.mode_group_cloud.addButton(self.non_cloud_gemini_radio)
 
 
-    self.clear_btn = QtWidgets.QPushButton(clear_btn_str)
-    self.clear_btn.setStyleSheet("""
-        QPushButton {
-            background-color: black;
-            color: white;
-            border: 6px solid #ff0000;
-            border-radius: 4px;
-            padding: 6px 12px;
-        }
-        QPushButton:hover {
-            background-color: #0069d9;
-            border-color: #ff0000;
-        }
-    """)
-    self.clear_btn.setFont(font)
-    self.clear_btn.clicked.connect(self.clear_all)
-
-    self.save_btn = QtWidgets.QPushButton(save_btn_str)
-    self.save_btn.setStyleSheet("""
-            QPushButton {
-                background-color: black;
-                color: white;
-                border: 6px solid #ff0000;
-                border-radius: 4px;
-                padding: 6px 12px;
-            }
-            QPushButton:hover {
-                background-color: #0069d9;
-                border-color: #ff0000;
-            }
-        """)
-    self.save_btn.setFont(font)
-    self.save_btn.clicked.connect(self.save_all2file)
-
-    self.cloudgemini_radio = QtWidgets.QRadioButton("Cloud Gemini")
-    self.cloudgemini_radio.setChecked(True)
-
+    if LOCAL_MODE == "True":
+        self.non_cloud_gemini_radio.setChecked(True)
+    else:
+        self.cloud_gemini_radio.setChecked(True)
 
     if isLTR:
-        search_layout.addWidget(self.search_btn)
+        search_layout.addWidget(self.save_btn)
         search_layout.addWidget(self.label)
         search_layout.addWidget(self.search_input)
-        search_layout.addWidget(self.save_btn)
-        search_layout.addWidget(self.clear_btn)
-        search_layout.addWidget(self.cloudgemini_radio)
+        search_layout.addSpacing(100)
+        search_layout.addWidget(self.non_cloud_gemini_radio)
+        search_layout.addWidget(self.cloud_gemini_radio)
     else:
-        search_layout.addWidget(self.cloudgemini_radio)
-        search_layout.addWidget(self.save_btn)
-        search_layout.addWidget(self.clear_btn)
+        search_layout.addWidget(self.cloud_gemini_radio)
+        search_layout.addWidget(self.non_cloud_gemini_radio)
+        search_layout.addSpacing(100)
         search_layout.addWidget(self.search_input)
         search_layout.addWidget(self.label)
         search_layout.addWidget(self.search_btn)
-
 
     layout.addLayout(search_layout)
     self.nongemini_radio = QtWidgets.QRadioButton(nongemini_radio_str)

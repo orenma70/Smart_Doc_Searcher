@@ -31,8 +31,9 @@ import tempfile
 #import search_core
 from search_core import simple_keyword_search
 from document_parsers import extract_text_and_images_from_pdf
-from config_reader import LOCAL_MODE, BUCKET_NAME, API_main
-from gcs_path_browser import GCSBrowserDialog
+from config_reader import API_main, BUCKET_NAME
+from gcs_path_browser import GCSBrowserDialog, check_sync
+from ui_setup import non_sync_cloud_str, sync_cloud_str
 
 # --- CONCEPTS (These would be filled by your UI state) ---
 # Imagine these variables capture the user's selection from radio buttons or checkboxes.
@@ -227,7 +228,7 @@ def on_search_button_clicked(self, query, directory_path):
             }
 
         start_time = time.time()
-        if LOCAL_MODE=="True":
+        if not self.cloud_gemini_radio.isChecked():
             results_data = simple_keyword_search(query, directory_path, str1_mode, str2_mode, str3_mode)
             formatted_output = format_simple_search_results(results_data)
             return formatted_output
@@ -293,9 +294,6 @@ def on_search_button_clicked(self, query, directory_path):
             # טיפול בשגיאות מה-API עצמו
             formatted_output = f"🛑 **שגיאת API או סטטוס לא ידוע:**\n{results_data.get('message', 'לא התקבלה הודעת שגיאה.')}"
 
-        # עדכון תיבת הטקסט ב-GUI
-        # (יש לוודא שאובייקט זה קיים במחלקת ה-GUI שלך)
-        #self.results_text_area.setText(formatted_output)
         return formatted_output
 
     except requests.exceptions.RequestException as e:
@@ -936,14 +934,17 @@ class SearchApp(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
 
-
-        if LOCAL_MODE == "True":
+        ui_setup.setup_ui(self)
+        result = check_sync("C:\\a\\מצרפי\\גירושין", BUCKET_NAME, prefix='גירושין')
+        sync0 = result["sync!"]
+        self.update_gcs_radio(sync0)
+        if not self.cloud_gemini_radio.isChecked():
             self.setWindowTitle(f" Hard Disk הדס לוי -  עורך דין - תוכנת חיפוש")
         else:
             self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {API_main}")
 
         self.resize(1700, 1200)
-        ui_setup.setup_ui(self)
+
 
 
 
@@ -979,7 +980,7 @@ class SearchApp(QtWidgets.QWidget):
             self.nongemini_radio.setStyleSheet("""
                 QRadioButton {
                     background-color: #f0f0f0; /* Light gray background for the frame */
-                    color: #333333; /* Optional: set text color */
+                    color: #333333; /* Optional: set text color */                    
                     padding: 5px; /* Optional: add internal padding */
                 }
                 QRadioButton::indicator {
@@ -1143,8 +1144,11 @@ class SearchApp(QtWidgets.QWidget):
         folder = self.dir_edit.text().strip()
         query = self.search_input.text().strip()
         self.results_area.clear()
+        #result = check_sync("C:\\a\\מצרפי\\גירושין", BUCKET_NAME, prefix='גירושין')
+        #sync0 = result["sync!"]
+        #self.update_gcs_radio(sync0)
 
-        if self.cloudgemini_radio.isChecked():
+        if self.cloud_gemini_radio.isChecked():
             normalized_path = folder.replace("\\", "/")
             prefix_to_strip = CLIENT_PREFIX_TO_STRIP.replace("\\", "/")
             # 3. Strip trailing slashes from both for consistent comparison (e.g., C:/a/מצרפי/)
@@ -1174,7 +1178,7 @@ class SearchApp(QtWidgets.QWidget):
             display_gemini_result(self, self.results_area, answer, folder)
             return
 
-
+        folder = self.display_root.text() +  "/"+ folder
         if not os.path.isdir(folder):
             QtWidgets.QMessageBox.warning(self, "שגיאה", "התיקיה לא קיימת.")
             return
@@ -1299,7 +1303,6 @@ class SearchApp(QtWidgets.QWidget):
             pass
 
 
-
     def browse_directory(self):
         """
         Handles browsing local HD or GCS based on LOCAL_MODE.
@@ -1310,11 +1313,22 @@ class SearchApp(QtWidgets.QWidget):
         # Assuming self.dir_edit is a QLineEdit widget used to display the path
 
 
-        if  LOCAL_MODE == "True":
+        if not self.cloud_gemini_radio.isChecked():
             initial_path = self.dir_edit.text()
+            initial_path = self.display_root.text() + "/" + initial_path
             dir_path = QtWidgets.QFileDialog.getExistingDirectory(self, "בחר תיקיה", initial_path or "/")
             # dir_path = RLO + dir_path # Assuming RLO is defined elsewhere
             if dir_path:
+                prefix_to_strip = CLIENT_PREFIX_TO_STRIP.replace("\\", "/")
+                prefix_to_strip = prefix_to_strip.strip('/')
+
+                # 4. Perform the strip only if the path starts with the prefix
+                if dir_path.lower().startswith(prefix_to_strip.lower()):
+                    # Strip the prefix, plus the slash that separates the prefix from the folder path
+                    dir_path = dir_path[len(prefix_to_strip):].strip('/')
+                else:
+                    # If no prefix match, use the normalized path as is
+                    dir_path = dir_path.strip('/')
                 self.dir_edit.setText(dir_path)
                 self.save_last_dir()
         else:
@@ -1340,6 +1354,20 @@ class SearchApp(QtWidgets.QWidget):
                 self.dir_edit.setText(last_dir)
         except:
             pass
+
+    def update_gcs_radio(self,sync0):
+        if sync0:
+            self.cloud_gemini_radio.setText(sync_cloud_str)
+        else:
+            self.cloud_gemini_radio.setText(non_sync_cloud_str)
+
+
+    def handle_radio_check(self):
+
+        if not self.cloud_gemini_radio.isChecked():
+            self.display_root.setText(CLIENT_PREFIX_TO_STRIP)
+        else:
+            self.display_root.setText("Bucket")
 
     def append_result(self, filepath, paragraph, search_terms):
         # Highlight search terms in paragraph

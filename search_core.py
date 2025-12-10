@@ -1,8 +1,5 @@
 import time
 import traceback  # Ensure this is imported for logging stack traces
-from google.cloud import storage
-from google.cloud import vision_v1 as vision
-from google import genai
 from google.genai import errors
 from flask import Flask, request, jsonify
 
