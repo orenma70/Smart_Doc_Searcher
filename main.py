@@ -1,9 +1,10 @@
 import sys
-import os
+import os, io
 import json
 import requests
 from PyQt5 import QtWidgets, QtCore, QtGui
 from docx import Document
+from PIL import Image
 import re
 import docx2txt
 import ui_setup  # import your setup module
@@ -910,6 +911,32 @@ def docx_search(path, words, mode='any', search_mode='partial'):
 
                     if paragraph_matches(full_text, words, mode, search_mode):
                         results.append(full_paragraph)
+
+        for rel in doc.part.rels.values():
+            if "image" in rel.target_ref:
+                # 1. Extract Image Data
+                image_part = rel.target_part
+                image_bytes = image_part.blob
+
+                # 2. Open Image using Pillow
+                image = Image.open(io.BytesIO(image_bytes))
+
+                # 3. Run OCR on the Image
+                try:
+                    # Use Tesseract to convert image to string
+                    image = image.convert('L')
+                    ocr_text = pytesseract.image_to_string(image,'heb')
+                    if paragraph_matches(ocr_text, words, mode, search_mode):
+                        full_paragraph = (
+                        f"{path}  <br><br> {ocr_text} <br>"
+                        )
+                        results.append(full_paragraph)
+                except pytesseract.TesseractNotFoundError:
+                    print("🚨 Tesseract is not installed or the path is incorrect. Cannot perform OCR.")
+                    return None
+                except Exception as e:
+                    print(f"An error occurred during OCR: {e}")
+
     except:
         pass
 
