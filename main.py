@@ -3,11 +3,7 @@ import os
 import json
 import requests
 from PyQt5 import QtWidgets, QtCore, QtGui
-from pdf2image import convert_from_path
-from PIL import Image # Used to handle the image object
 from docx import Document
-#   from PyPDF2 import PdfReader
-import pypdf
 import re
 import docx2txt
 import ui_setup  # import your setup module
@@ -34,13 +30,9 @@ from document_parsers import extract_text_and_images_from_pdf
 from config_reader import API_main, BUCKET_NAME
 from gcs_path_browser import GCSBrowserDialog, check_sync
 from ui_setup import non_sync_cloud_str, sync_cloud_str
+import pytesseract
 
-# --- CONCEPTS (These would be filled by your UI state) ---
-# Imagine these variables capture the user's selection from radio buttons or checkboxes.
-
-# The server receives this JSON, reads "match_type": "fuzzy", and runs
-# an algorithm that ignores the misspelling 'polisy' and matches it to 'policy'.
-
+pytesseract.pytesseract.tesseract_cmd = r'C:\\Program Files\Tesseract-OCR\tesseract.exe'
 
 chat_gpt = False
 
@@ -751,7 +743,6 @@ def docx2pdf_search(path, words, mode='any', search_mode='partial'):
 def pdf_search(self, path, words, mode='any', search_mode='partial', read_from_temp=""):
     results = []
 
-    # extract_hebrew_pdf_fully_corrected(path, "c:\\a\\a.text")
     try:
         if read_from_temp.strip():
             pdf_path = read_from_temp
@@ -763,50 +754,66 @@ def pdf_search(self, path, words, mode='any', search_mode='partial', read_from_t
         else:
             reader = pdfplumber.open(path)
 
-        previous_page_trailer = []
         for pnum, page in enumerate(reader.pages, start=1):
 
+            # 1. ATTEMPT TO EXTRACT STRUCTURED TEXT (Current Logic)
             page_height = page.height
             header_limit = HEADER_MARGIN
             footer_limit = page_height - FOOTER_MARGIN
-
-            # Extract structured text blocks with coordinates (CRITICAL for line order)
 
             blocks: List[Dict] = page.extract_text_lines(
                 return_chars=False,
                 return_textbox=True,
                 strip=False
             )
-            # --- NEW HEADER/FOOTER FILTERING LOGIC ---
-            # Keep only the blocks whose vertical position is between the margins
+
+            # Apply filtering and sorting logic as before
             filtered_blocks = [
                 block for block in blocks
                 if block['top'] > header_limit and block['bottom'] < footer_limit
             ]
-            # --- END FILTERING LOGIC ---
-
-            # Sort blocks by vertical (top) then horizontal (x0) position
             sorted_blocks = sorted(filtered_blocks, key=lambda b: (b['top'], b['x0']))
-
             page_raw_text_lines = [block['text'] for block in sorted_blocks]
 
-            # Apply the full surgical reversal fix to each line
+            # Initialize lines from structured text
             lines = [fix_hebrew_reversal(line) for line in page_raw_text_lines]
-            lines = previous_page_trailer + lines
+
+            # 2. OCR FALLBACK LOGIC
+            # If pdfplumber found very few lines (e.g., only page numbers or nothing), run OCR
+            if len("".join(lines).strip()) < 50:  # Check if structured text is sparse
+
+                print(f"Page {pnum}: Structured text is sparse. Running OCR fallback.")
+
+                try:
+                    # Render the page as a PIL image
+                    # Note: You may need to install 'poppler' utilities for pdfplumber to work with image rendering
+                    rgb_image_object = page.to_image(resolution=220).original
+                    im = rgb_image_object.convert('L')
+                    ocr_text = pytesseract.image_to_string(im, lang='heb') #
+                    lines = [line.strip() for line in ocr_text.split('\n') if line.strip()]
+
+
+                    if not lines:
+                        print(f"Page {pnum}: OCR failed to find text.")
+
+                except Exception as e:
+                    print(f"Page {pnum}: OCR failed or Tesseract is not configured: {e}")
+
+            # --- CONTINUE WITH SEARCH LOGIC (The rest of your function remains mostly the same) ---
+
+            previous_page_trailer = []
+            lines = previous_page_trailer + lines  # Re-initialize lines here after OCR check
 
             l = len(lines)
 
             i = 0
             if search_mode == 'chatgpt':
-
+                # Existing ChatGPT logic...
                 content_summary = "\n".join(lines)
-
-                # Create prompt
 
                 query = self.search_input.text().strip()
                 prompt = f"כתוב את התשובה בשפה העברית על בסיס הטקסט הבא רק אם יש לך תשובה החלטית אחרת השב $$$$:\n{content_summary}\nשאלה: {query}"
                 pre = f"<span style='color:blue;'>— עמוד {pnum}</span>"
-                # Call GPT API
                 time.sleep(2)
                 answer = self.ask_chatgpt(prompt)
                 pre = f"<span style='color:blue;'> — עמוד {pnum}  </span>"
@@ -821,69 +828,49 @@ def pdf_search(self, path, words, mode='any', search_mode='partial', read_from_t
                     full_paragraph = ""
 
                 results.append(full_paragraph)
+
             else:
-
                 while i < l:
-                    # lnum is the 1-based index (i + 1)
+                    lnum = i + 1
+                    ln = lines[i]
 
-                        lnum = i + 1
-                        ln = lines[i]
+                    # 1. First Check: Does the current line match ANY of the search words?
+                    if paragraph_matches(ln, words, 'any', search_mode):
+                        # 2. Safely gather the 3-line context
+                        start_index = max(0, lnum - 2)
+                        end_index = min(lnum + 2, l)
+                        if (lnum + 2) > l:
+                            previous_page_trailer = lines[lnum - 1:]
+                        else:
+                            previous_page_trailer = []
 
-                        # 1. First Check: Does the current line match ANY of the search words?
-                        if paragraph_matches(ln, words, 'any', search_mode):
+                        context_lines = lines[start_index:end_index]
+                        context_lines = [line.replace(".₪", "₪.") for line in context_lines]
+                        context_lines = [line.replace(",₪", "₪,") for line in context_lines]
 
-                            # 2. Safely gather the 3-line context: [line before], [match line], [line after]
-                            start_index = max(0, lnum - 2)
-                            end_index = min(lnum + 2, l)
-                            if (lnum + 2) > l:
-                                previous_page_trailer = lines[lnum - 1:]
-                            else:
-                                previous_page_trailer = []
+                        # 3. Concatenate lines into a single searchable string
+                        context_text = " ".join(context_lines)
 
-                            context_lines = lines[start_index:end_index]
-                            context_lines = [line.replace(".₪", "₪.") for line in context_lines]
-                            context_lines = [line.replace(",₪", "₪,") for line in context_lines]
-                            #context_lines = [re.sub( r' ,\\1', r'(.), ',line) for line in context_lines]
-                            #context_lines = [re.sub(r' .\\1', r'(.). ', line) for line in context_lines]
+                        # 4. Second Check: Does the 3-line context match the FULL user criteria?
+                        if paragraph_matches(context_text, words, mode, search_mode):
+                            pre = f"<span style='color:blue;'>— עמוד {pnum} — שורות {start_index + 1}-{end_index}</span>"
+                            path_for_url = path.replace('\\', '/')
+                            file_url_with_page = f"filepage:///{path_for_url}?page={pnum}"
+                            open_link = f"<a href='{file_url_with_page}' style='color:green; text-decoration: none;'>[פתח קובץ]</a>"
 
+                            full_paragraph = (
+                                    " ".join([path]) + "  " +
+                                    pre + " " + open_link + "<br><br>" +
+                                    "<br>".join(context_lines) + "<br>"
+                            )
 
-                            # 3. Concatenate lines into a single searchable string
-                            context_text = " ".join(context_lines)
+                            results.append(full_paragraph)
+                            i += 2
 
-                            # 4. Second Check: Does the 3-line context match the FULL user criteria (e.g., ALL words)?
-                            # We use the original 'mode' (which is 'all' if the user used '+' or '&')
-                            if paragraph_matches(context_text, words, mode, search_mode):
-                                # Get neighboring lines to form a paragraph
-                                # If both checks pass, format the 3-line context as the result
+                    i = i + 1
 
-                                # Descriptive text for the user (Context is still important)
-                                pre = f"<span style='color:blue;'>— עמוד {pnum} — שורות {start_index + 1}-{end_index}</span>"
-
-                                # HTML Link definition (Uses fileonly:// to skip page jump)
-                                path_for_url = path.replace('\\', '/')
-                                fileonly_url = f"file:///{path_for_url}"  # Three slashes for file protocol on Windows
-
-                                # Ensure the custom protocol signal is used if you need to differentiate the link types
-                                fileonly_url = f"fileonly:///{path_for_url}"  # Use three slashes for consistency
-                                file_url_with_page = f"filepage:///{path_for_url}?page={pnum}"
-                                open_link = f"<a href='{file_url_with_page}' style='color:green; text-decoration: none;'>[פתח קובץ]</a>"
-
-                                # Assemble the final HTML paragraph
-                                full_paragraph = (
-                                        " ".join([path]) + "  " +
-                                        pre + " " + open_link + "<br><br>" +
-                                        "<br>".join(context_lines) + "<br>"
-                                )
-
-                                results.append(full_paragraph)
-
-                                # Advance loop index to skip context lines
-                                i += 2
-
-                        i = i + 1
-    except:
-        pass
-
+    except Exception as general_error:
+        print(f"An unexpected error occurred during PDF processing: {general_error}")
 
     finally:
         # Delete temp PDF if it was used
@@ -892,7 +879,9 @@ def pdf_search(self, path, words, mode='any', search_mode='partial', read_from_t
                 os.remove(pdf_path)
             except Exception as e:
                 print(f"Error deleting temp PDF: {e}")
+
     return results
+
 
 
 def docx_search(path, words, mode='any', search_mode='partial'):
@@ -1278,6 +1267,7 @@ class SearchApp(QtWidgets.QWidget):
 
 
                         else:
+                            pdf_text, image_list = extract_text_and_images_from_pdf(str(path))
                             matches = pdf_search(self, path, words, mode, search_mode)
 
                         # matches2 = pdf_search_flags(path, words, search_mode)
