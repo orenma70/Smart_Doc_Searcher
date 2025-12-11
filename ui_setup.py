@@ -151,7 +151,7 @@ def setup_ui(self):
     if LOCAL_MODE == "True":
         self.display_root = QtWidgets.QLabel(CLIENT_PREFIX_TO_STRIP)
     else:
-        self.display_root = QtWidgets.QLabel("Bucket")
+        self.display_root = QtWidgets.QLabel("☁️ Bucket")
 
     self.display_root.setFont(font)
 

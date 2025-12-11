@@ -9,7 +9,7 @@ import traceback
 from config_reader import GCS_OCR_OUTPUT_PATH
 from config_reader import CLIENT_PREFIX_TO_STRIP
 from config_reader import LOCAL_MODE
-
+from typing import List, Dict, Any, Tuple
 from pathlib import Path
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -17,6 +17,9 @@ from typing import List, Dict, Any, Optional
 import json
 from docx import Document
 from document_parsers import extract_text_and_images_from_pdf
+import pytesseract
+from PIL import Image
+
 
 # --- Global Client Variables (Set to None for Lazy Loading) ---
 storage_client: Optional[storage.Client] = None
@@ -440,9 +443,42 @@ def extract_content(blob_bytes, blob_name, full_gcs_path):
         text = ""
         try:
             document = Document(io.BytesIO(blob_bytes))
+            combined_text = []
+
+            # 1. Extract Regular Editable Text
             for paragraph in document.paragraphs:
-                text += paragraph.text + "\n"
+                combined_text.append(paragraph.text)
+
+            # 2. Extract and OCR Embedded Images
+            for rel_id, rel in document.part.rels.items():
+                # Check if the relationship target is an image type
+                if "image" in rel.target_ref:
+                    try:
+                        # Get image data and open it with Pillow
+                        image_part = rel.target_part
+                        image_bytes = image_part.blob
+                        image = Image.open(io.BytesIO(image_bytes))
+
+                        # Run OCR
+                        ocr_text = pytesseract.image_to_string(image)
+
+                        # Append OCR results with a separator/label
+                        combined_text.append(f"\n--- OCR Result from Image {rel_id} ---\n{ocr_text.strip()}")
+
+                    except pytesseract.TesseractNotFoundError:
+                        # IMPORTANT: This error means Tesseract executable is missing in the cloud!
+                        combined_text.append("\n[OCR ERROR: Tesseract not found on system path. Image skipped.]")
+                    except Exception as e:
+                        # Handle other potential errors (like missing image dependencies)
+                        combined_text.append(f"\n[OCR ERROR: Failed to process image {rel_id}: {e}]")
+
+            # 3. Combine and Optionally Search
+            text = "\n".join(combined_text)
+
+            #for paragraph in document.paragraphs:
+            #    text += paragraph.text + "\n"
             return text.strip()
+
         except Exception as e:
             return f"ERROR: Could not read DOCX content: {e}"
 
@@ -453,9 +489,6 @@ def extract_content(blob_bytes, blob_name, full_gcs_path):
     except Exception as e:
         return f"ERROR: Could not decode text content for {blob_name}. {e}"
 
-
-# Global limit for concurrency to prevent overwhelming the server/GCS
-MAX_CONCURRENT_DOWNLOADS = 10
 
 
 def get_gcs_files_context(directory_path: str, bucket_name: str, query: str = "") -> List[Dict[str, Any]]:

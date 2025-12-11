@@ -389,7 +389,9 @@ def extract_docx_content(docx_path: str, question: str):
     with tempfile.TemporaryDirectory() as temp_dir:
         # 2. Extract text and save images to the temp directory
         try:
-            full_text = docx2txt.process(docx_path, temp_dir)
+            matches = docx_search(docx_path, question)
+            full_text = matches #docx2txt.process(docx_path, temp_dir)
+
         except Exception as e:
             print(f"Error during docx extraction: {e}")
             return [types.Part.from_text(f"Could not process document. Question: {question}")]
@@ -1383,8 +1385,10 @@ class SearchApp(QtWidgets.QWidget):
 
         if not self.cloud_gemini_radio.isChecked():
             self.display_root.setText(CLIENT_PREFIX_TO_STRIP)
+            self.setWindowTitle(f" Hard Disk הדס לוי -  עורך דין - תוכנת חיפוש")
         else:
-            self.display_root.setText("Bucket")
+            self.display_root.setText("☁️ Bucket")
+            self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {API_main}")
 
     def append_result(self, filepath, paragraph, search_terms):
         # Highlight search terms in paragraph
