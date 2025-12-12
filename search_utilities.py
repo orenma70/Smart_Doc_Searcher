@@ -29,12 +29,13 @@ gcs_bucket: Optional[storage.Client] = None  # <-- NEW: Store the GCS Bucket obj
 
 # --- Global Shared State for Caching ---
 
-
+IS_CLOUD_RUN = bool(os.environ.get('K_SERVICE'))
 MAX_CHARS_PER_DOC = 100000
 LOCAL_ROOT_PATH = CLIENT_PREFIX_TO_STRIP  # CHANGE THIS to your root folder!
 MAX_WAIT_SECONDS = 600
 POLL_INTERVAL_SECONDS = 10
 MAX_CONCURRENT_DOWNLOADS = 10
+
 
 # In search_utilities.py (UPDATED GLOBALS)
 # --- Global Shared State for Caching ---
@@ -203,7 +204,7 @@ def get_documents_for_path(directory_path: str) -> List[Dict[str, Any]]:
     print(f"CACHE-MISS: Fetching from source for '{cleaned_path}'.")
 
     # Perform the expensive fetch (Local or GCS)
-    if LOCAL_MODE == "True":
+    if LOCAL_MODE == "True" and not IS_CLOUD_RUN:
         fetched_documents = get_hd_files_context(cleaned_path, LOCAL_ROOT_PATH)
     else:
         fetched_documents = get_gcs_files_context(cleaned_path, BUCKET_NAME)
@@ -450,27 +451,27 @@ def extract_content(blob_bytes, blob_name, full_gcs_path):
                 combined_text.append(paragraph.text)
 
             # 2. Extract and OCR Embedded Images
-            for rel_id, rel in document.part.rels.items():
-                # Check if the relationship target is an image type
-                if "image" in rel.target_ref:
+
+            for rel in document.part.rels.items():
+                target_ref_safe = getattr(rel, 'target_ref', '')
+                if target_ref_safe:
                     try:
-                        # Get image data and open it with Pillow
-                        image_part = rel.target_part
-                        image_bytes = image_part.blob
-                        image = Image.open(io.BytesIO(image_bytes))
+                        if "image" in target_ref_safe or "/media/" in target_ref_safe:
+                            image_part = rel.target_part
+                            image_bytes = image_part.blob
+                            image = Image.open(io.BytesIO(image_bytes))
 
-                        # Run OCR
-                        ocr_text = pytesseract.image_to_string(image)
-
-                        # Append OCR results with a separator/label
-                        combined_text.append(f"\n--- OCR Result from Image {rel_id} ---\n{ocr_text.strip()}")
-
+                            # Run OCR
+                            ocr_text = pytesseract.image_to_string(image, 'heb')
+                            # a = b[4]
+                            # Append OCR results with a separator/label
+                            combined_text.append(ocr_text)
                     except pytesseract.TesseractNotFoundError:
                         # IMPORTANT: This error means Tesseract executable is missing in the cloud!
                         combined_text.append("\n[OCR ERROR: Tesseract not found on system path. Image skipped.]")
                     except Exception as e:
                         # Handle other potential errors (like missing image dependencies)
-                        combined_text.append(f"\n[OCR ERROR: Failed to process image {rel_id}: {e}]")
+                        combined_text.append(f"\n[OCR ERROR: Failed to process image: {e}]")
 
             # 3. Combine and Optionally Search
             text = "\n".join(combined_text)

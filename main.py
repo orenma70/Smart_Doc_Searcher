@@ -792,7 +792,11 @@ def pdf_search(self, path, words, mode='any', search_mode='partial', read_from_t
                     # Note: You may need to install 'poppler' utilities for pdfplumber to work with image rendering
                     rgb_image_object = page.to_image(resolution=220).original
                     im = rgb_image_object.convert('L')
-                    ocr_text = pytesseract.image_to_string(im, lang='heb') #
+                    if ui_setup.isLTR:
+                        ocr_text = pytesseract.image_to_string(im, lang='eng')
+                    else:
+                        ocr_text = pytesseract.image_to_string(im, lang='heb')
+
                     lines = [line.strip() for line in ocr_text.split('\n') if line.strip()]
 
 
@@ -927,7 +931,12 @@ def docx_search(path, words, mode='any', search_mode='partial'):
                 try:
                     # Use Tesseract to convert image to string
                     image = image.convert('L')
-                    ocr_text = pytesseract.image_to_string(image,'heb')
+
+                    if ui_setup.isLTR:
+                        ocr_text = pytesseract.image_to_string(image, lang='eng')
+                    else:
+                        ocr_text = pytesseract.image_to_string(image, lang='heb')
+
                     if paragraph_matches(ocr_text, words, mode, search_mode):
                         full_paragraph = (
                         f"{path}  <br><br> {ocr_text} <br>"
@@ -956,10 +965,17 @@ class SearchApp(QtWidgets.QWidget):
         result = check_sync("C:\\a\\מצרפי\\גירושין", BUCKET_NAME, prefix='גירושין')
         sync0 = result["sync!"]
         self.update_gcs_radio(sync0)
+
+        response = requests.get(API_cache_status_url)
+        response_str = response.content.decode('utf-8').strip()
+        data = json.loads(response_str)
+        self.cloud_run_rev=data["REVISION"]
+
+
         if not self.cloud_gemini_radio.isChecked():
-            self.setWindowTitle(f" Hard Disk הדס לוי -  עורך דין - תוכנת חיפוש")
+            self.setWindowTitle(f"הדס לוי -  עורך דין - תוכנת חיפוש " + f" Hard Disk")
         else:
-            self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {API_main}")
+            self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_run_rev}")
 
         self.resize(1700, 1200)
 
@@ -1162,9 +1178,6 @@ class SearchApp(QtWidgets.QWidget):
         folder = self.dir_edit.text().strip()
         query = self.search_input.text().strip()
         self.results_area.clear()
-        #result = check_sync("C:\\a\\מצרפי\\גירושין", BUCKET_NAME, prefix='גירושין')
-        #sync0 = result["sync!"]
-        #self.update_gcs_radio(sync0)
 
         if self.cloud_gemini_radio.isChecked():
             normalized_path = folder.replace("\\", "/")
@@ -1354,8 +1367,8 @@ class SearchApp(QtWidgets.QWidget):
             # --- GCS BROWSER INTEGRATION ---
 
             # 1. Use the static method to show the custom dialog
-            #selected_gcs_path = GCSBrowserDialog.get_directory(parent=self, initial_path=BUCKET_NAME+"/גירושין")
-            selected_gcs_path = GCSBrowserDialog.get_directory(parent=self, initial_path='גירושין')
+            initial_path = self.dir_edit.text()
+            selected_gcs_path = GCSBrowserDialog.get_directory(parent=self, initial_path=initial_path)
 
             # 2. Update the main application's path if a selection was made
             if selected_gcs_path is not None:
@@ -1377,18 +1390,34 @@ class SearchApp(QtWidgets.QWidget):
     def update_gcs_radio(self,sync0):
         if sync0:
             self.cloud_gemini_radio.setText(sync_cloud_str)
+            self.display_root.setStyleSheet("color: blue;")
         else:
             self.cloud_gemini_radio.setText(non_sync_cloud_str)
+            self.display_root.setStyleSheet("color: red;")
 
 
     def handle_radio_check(self):
 
         if not self.cloud_gemini_radio.isChecked():
             self.display_root.setText(CLIENT_PREFIX_TO_STRIP)
-            self.setWindowTitle(f" Hard Disk הדס לוי -  עורך דין - תוכנת חיפוש")
+            self.display_root.setStyleSheet("color: black;")
+            self.setWindowTitle(f"הדס לוי -  עורך דין - תוכנת חיפוש " + f" Hard Disk")
         else:
+            #white_cloud = '<span style="color: white;">☁️</span>'
+            #black_bucket = '<span style="color: black;"> Bucket</span>'
+            #self.display_root.setText(white_cloud + black_bucket)
+
             self.display_root.setText("☁️ Bucket")
-            self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {API_main}")
+            result = check_sync("C:\\a\\מצרפי\\גירושין", BUCKET_NAME, prefix='גירושין')
+            sync0 = result["sync!"]
+            self.update_gcs_radio(sync0)
+            if sync0:
+                self.display_root.setStyleSheet("color: blue;")
+            else:
+                self.display_root.setStyleSheet("color: red;")
+
+            self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_run_rev}")
+
 
     def append_result(self, filepath, paragraph, search_terms):
         # Highlight search terms in paragraph

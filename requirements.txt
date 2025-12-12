@@ -12,3 +12,4 @@ pypdf
 Pillow==10.2.0
 PyMuPDF
 pytesseract
+lxml

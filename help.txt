@@ -1,9 +1,10 @@
 git status
 git add .
 git commit -m "v10.2.0 Arch: improve Implement Path-Based Caching (v10.1.0)."
+git push origin main
 git tag v10.2.0
 git push origin v10.2.0
-git push origin main
+
 
 
 

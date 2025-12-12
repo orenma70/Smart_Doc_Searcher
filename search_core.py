@@ -1,4 +1,4 @@
-import time
+import time, os
 import traceback  # Ensure this is imported for logging stack traces
 from google.genai import errors
 from flask import Flask, request, jsonify
@@ -243,11 +243,10 @@ timer0 = time.time()
 def get_cache_status():
     """Returns the current status of the document cache."""
 
-
-
+    revision = os.environ.get("K_REVISION", "LOCAL_TEST_ENV")
     status_data = {
 
-        "time_since_app_start_s": round(time.time() - timer1, 2),
+        "REVISION": revision
 
     }
     return jsonify(status_data)

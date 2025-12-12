@@ -152,6 +152,7 @@ def setup_ui(self):
         self.display_root = QtWidgets.QLabel(CLIENT_PREFIX_TO_STRIP)
     else:
         self.display_root = QtWidgets.QLabel("☁️ Bucket")
+        self.display_root.setStyleSheet("color: red;")
 
     self.display_root.setFont(font)
 
@@ -242,7 +243,7 @@ def setup_ui(self):
                     """)
 
     #self.non_cloud_gemini_radio.toggled.connect(self.handle_radio_check)
-    self.cloud_gemini_radio.toggled.connect(self.handle_radio_check)
+
 
     self.mode_group_cloud = QtWidgets.QButtonGroup()
     self.mode_group_cloud.addButton(self.cloud_gemini_radio)
@@ -253,6 +254,8 @@ def setup_ui(self):
         self.non_cloud_gemini_radio.setChecked(True)
     else:
         self.cloud_gemini_radio.setChecked(True)
+
+    self.cloud_gemini_radio.toggled.connect(self.handle_radio_check)
 
     if isLTR:
         search_layout.addWidget(self.save_btn)
