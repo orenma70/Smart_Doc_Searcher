@@ -1,7 +1,9 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
 from google.genai import types
 from config_reader import LOCAL_MODE, CLIENT_PREFIX_TO_STRIP
-
+from utils import (CHECKBOX_STYLE_QSS_black, CHECKBOX_STYLE_QSS_gray, CHECKBOX_STYLE_QSS_blue, CHECKBOX_STYLE_QSS_red,
+                   Container_STYLE_QSS, Radio_STYLE_QSS_green, Radio_STYLE_QSS_red, QRadioButton_STYLE_QSS_green_1515bg,QRadioButton_STYLE_QSS_green_1616bg,
+                   QRadioButton_STYLE_QSS_green_1520bg)
 Vertic_Flag = True
 isLTR = False # left to right or RTL
 chat_mode = True
@@ -208,39 +210,10 @@ def setup_ui(self):
     self.cloud_gemini_radio = QtWidgets.QCheckBox(non_sync_cloud_str)
 
 
-    self.cloud_gemini_radio.setStyleSheet("""
-                QCheckBox {
-                    background-color: #f0f0f0; /* Light gray background for the frame */
-                    color: #0000FF; /* Optional: set text color */
-                    font-size: 20pt;
-                    font-weight: bold;
-                    padding: 5px; /* Optional: add internal padding */
-                    border: 6px solid #FF0000;
-                    border-radius: 6px;
-                }
-                QCheckBox::indicator {
-                    width: 25px;
-                    height: 25px;
-                }
-                """)
+
 
     self.non_cloud_gemini_radio = QtWidgets.QCheckBox(non_cloud_str)
 
-    self.non_cloud_gemini_radio.setStyleSheet("""
-                    QCheckBox {
-                        background-color: #f0f0f0; /* Light gray background for the frame */
-                        color: #0000FF; /* Optional: set text color */
-                        font-size: 20pt;
-                        font-weight: bold;
-                        padding: 5px; /* Optional: add internal padding */
-                        border: 6px solid #FF0000;
-                        border-radius: 6px;
-                    }
-                    QCheckBox::indicator {
-                        width: 25px;
-                        height: 25px;
-                    }
-                    """)
 
     #self.non_cloud_gemini_radio.toggled.connect(self.handle_radio_check)
 
@@ -252,8 +225,12 @@ def setup_ui(self):
 
     if LOCAL_MODE == "True":
         self.non_cloud_gemini_radio.setChecked(True)
+        self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
+        self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_gray)
     else:
         self.cloud_gemini_radio.setChecked(True)
+        self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
+        self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_gray)
 
     self.cloud_gemini_radio.toggled.connect(self.handle_radio_check)
 
@@ -280,22 +257,7 @@ def setup_ui(self):
 
     if  not chat_mode:
         self.search_input.setPlaceholderText(label_str)
-        self.nongemini_radio.setStyleSheet("""
-            QRadioButton {
-                background-color: #0000ff; /* Light gray background for the frame */
-                color: #333333; /* Optional: set text color */
-                padding: 5px; /* Optional: add internal padding */
-            }
-            QRadioButton::indicator {
-                width: 15px;
-                height: 20px;
-                border-radius: 6px;
-                border: 6px solid black;
-            }
-            QRadioButton::indicator:checked {
-                background-color: green;
-            }
-            """)
+        self.nongemini_radio.setStyleSheet(QRadioButton_STYLE_QSS_green_1520bg)
     else:
         self.search_input.setPlaceholderText(label_gpt_str)
 
@@ -308,39 +270,9 @@ def setup_ui(self):
     self.gemini_radio = QtWidgets.QRadioButton(gemini_radio_str)
     if  chat_mode:
         self.gemini_radio.setChecked(True)
-        self.gemini_radio.setStyleSheet("""
-                QRadioButton {
-                    background-color: #0000ff; /* Light gray background for the frame */
-                    color: #333333; /* Optional: set text color */
-                    padding: 5px; /* Optional: add internal padding */
-                }
-                QRadioButton::indicator {
-                    width: 16px;
-                    height: 16px;
-                    border-radius: 8;
-                    border: 6px solid black;
-                }
-                QRadioButton::indicator:checked {
-                    background-color: green;
-                }
-            """)
+        self.gemini_radio.setStyleSheet(QRadioButton_STYLE_QSS_green_1616bg)
 
-        self.nongemini_radio.setStyleSheet("""
-                QRadioButton {
-                    background-color: #f0f0f0; /* Light gray background for the frame */
-                    color: #333333; /* Optional: set text color */
-                    padding: 5px; /* Optional: add internal padding */
-                }
-                QRadioButton::indicator {
-                    width: 15px;
-                    height: 15px;
-                    border-radius: 10px;
-                    border: 6px solid black;
-                }
-                QRadioButton::indicator:checked {
-                    background-color: green;
-                }
-                """)
+        self.nongemini_radio.setStyleSheet(QRadioButton_STYLE_QSS_green_1515bg)
 
 
     self.gemini_radio.setFont(font2)
@@ -385,60 +317,20 @@ def setup_ui(self):
     self.all_word_search_radio = QtWidgets.QRadioButton(all_word_search_radio_str)
     self.all_word_search_radio.setChecked(True)
     self.all_word_search_radio.setFont(font)
-    self.all_word_search_radio.setStyleSheet("""
-            QRadioButton::indicator {
-                width: 15px;
-                height: 15px;
-                border-radius: 6px;
-                border: 6px solid black;
-            }
-            QRadioButton::indicator:checked {
-                background-color: red;
-            }
-        """)
+    self.all_word_search_radio.setStyleSheet(Radio_STYLE_QSS_red)
 
     self.any_word_search_radio = QtWidgets.QRadioButton(any_word_search_radio_str)
     self.any_word_search_radio.setFont(font)
-    self.any_word_search_radio.setStyleSheet("""
-                QRadioButton::indicator {
-                    width: 15px;
-                    height: 15px;
-                    border-radius: 6px;
-                    border: 6px solid black;
-                }
-                QRadioButton::indicator:checked {
-                    background-color: red;
-                }
-            """)
+    self.any_word_search_radio.setStyleSheet(Radio_STYLE_QSS_red)
 
     self.show_line_mode_radio = QtWidgets.QRadioButton(line_str)
     self.show_line_mode_radio.setFont(font)
-    self.show_line_mode_radio.setStyleSheet("""
-                 QRadioButton::indicator {
-                     width: 15px;
-                     height: 15px;
-                     border-radius: 6px;
-                     border: 6px solid black;
-                 }
-                 QRadioButton::indicator:checked {
-                     background-color: green;
-                 }
-             """)
+    self.show_line_mode_radio.setStyleSheet(Radio_STYLE_QSS_green)
 
     self.show_paragraph_mode_radio = QtWidgets.QRadioButton(paragraph_str)
     self.show_paragraph_mode_radio.setFont(font)
     self.show_paragraph_mode_radio.setChecked(True)
-    self.show_paragraph_mode_radio.setStyleSheet("""
-                     QRadioButton::indicator {
-                         width: 15px;
-                         height: 15px;
-                         border-radius: 6px;
-                         border: 6px solid black;
-                     }
-                     QRadioButton::indicator:checked {
-                         background-color: green;
-                     }
-                 """)
+    self.show_paragraph_mode_radio.setStyleSheet(Radio_STYLE_QSS_green)
     # --- Create two button groups for mutual exclusivity
     self.mode_group1 = QtWidgets.QButtonGroup()
     self.mode_group2 = QtWidgets.QButtonGroup()
@@ -477,14 +369,7 @@ def setup_ui(self):
     g3_layout.addWidget(self.gemini_radio)
     g3_layout.addStretch()
 
-    g3_container.setStyleSheet("""
-           QWidget {
-               background-color: #F0F8FF; /* Alice Blue background */
-               border: 2px solid #6495ED; /* Cornflower Blue border */
-               border-radius: 6px;
-               padding: 5px;
-           }
-       """)
+    g3_container.setStyleSheet(Container_STYLE_QSS)
     small_gap = 10
     g11_container = QtWidgets.QWidget()
     g11_layout = QtWidgets.QHBoxLayout(g11_container)
@@ -494,14 +379,7 @@ def setup_ui(self):
     g11_layout.addWidget(self.any_word_search_radio)
     g11_layout.addStretch()
 
-    g11_container.setStyleSheet("""
-               QWidget {
-                   background-color: #00F0FF; /* Alice Blue background */
-                   border: 2px solid #6495ED; /* Cornflower Blue border */
-                   border-radius: 6px;
-                   padding: 5px;
-               }
-           """)
+    g11_container.setStyleSheet(Container_STYLE_QSS)
 
     g12_container = QtWidgets.QWidget()
     g12_layout = QtWidgets.QHBoxLayout(g12_container)
@@ -510,28 +388,14 @@ def setup_ui(self):
     g12_layout.addWidget(self.show_line_mode_radio)
     g12_layout.addStretch()
 
-    g12_container.setStyleSheet("""
-                 QWidget {
-                     background-color: #00F0FF; /* Alice Blue background */
-                     border: 2px solid #6495ED; /* Cornflower Blue border */
-                     border-radius: 6px;
-                     padding: 5px;
-                 }
-             """)
+    g12_container.setStyleSheet(Container_STYLE_QSS)
     both_groups_layout = QtWidgets.QHBoxLayout()
 
     # Second group (Partial / Exact)
     #g2_layout = QtWidgets.QHBoxLayout()
 
     g1_container = QtWidgets.QWidget()
-    g1_container.setStyleSheet("""
-                   QWidget {
-                       background-color: #00FFF0; /* Alice Blue background */
-                       border: 2px solid #6495ED; /* Cornflower Blue border */
-                       border-radius: 6px;
-                       padding: 5px;
-                   }
-               """)
+    g1_container.setStyleSheet(Container_STYLE_QSS)
     g1_layout = QtWidgets.QHBoxLayout(g1_container)
     g1_layout.addWidget(self.partial_search_radio)
     g1_layout.addSpacing(small_gap)

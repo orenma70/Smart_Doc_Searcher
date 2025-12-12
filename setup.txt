@@ -6,7 +6,7 @@ CLIENT_PREFIX_TO_STRIP=C:/a/מצרפי
 LOCAL_MODE=False
 
 # כתובות ה-API של Cloud Run 
-API_main=https://smart-doc-searcher-api-v14-359127107055.us-central1.run.app/
+API_main=https://smart-doc-searcher-api-v15-359127107055.us-central1.run.app/
 
 API_search_url=search
 API_simple_search_url=simple_search	

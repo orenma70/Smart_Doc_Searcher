@@ -8,7 +8,7 @@ from search_utilities import get_storage_client
 import time
 import hashlib
 import binascii, base64
-
+from ui_setup import isLTR
 
 def md5_of_file(path):
     """Compute MD5 checksum of a local file."""
@@ -150,14 +150,24 @@ class GCSBrowserDialog(QtWidgets.QDialog):
         # Widgets
         self.path_label = QtWidgets.QLabel("Path: /")
         self.list_widget = QtWidgets.QListWidget()
-        self.ok_button = QtWidgets.QPushButton("Select Folder")
-        self.cancel_button = QtWidgets.QPushButton("Cancel")
-        self.up_button = QtWidgets.QPushButton("Up")
+
+        self.up_button = QtWidgets.QPushButton("↑ Up ↑")
+        self.up_button.setFixedWidth(120)
+        self.up_button.setStyleSheet("padding: 5px 10px; font-size: 18pt;width: 60px; height: 30px;")
+
+        if isLTR:
+            self.ok_button = QtWidgets.QPushButton("Select Folder 📂")
+            self.cancel_button = QtWidgets.QPushButton("Cancel")
+        else:
+            self.ok_button = QtWidgets.QPushButton("📂 בחר ספרייה")
+            self.cancel_button = QtWidgets.QPushButton("בטל x")
+
 
         # Layout
         path_layout = QtWidgets.QHBoxLayout()
-        path_layout.addWidget(self.up_button)
         path_layout.addWidget(self.path_label)
+        path_layout.addWidget(self.up_button)
+
 
         button_layout = QtWidgets.QHBoxLayout()
         button_layout.addStretch(1)
@@ -186,7 +196,8 @@ class GCSBrowserDialog(QtWidgets.QDialog):
         # Strip trailing slash for display, but keep it internal for logic
         self.current_path = path.strip('/').replace('\\', '/')
         display_path = self.current_path if self.current_path else " (Root)"
-        self.path_label.setText(f"Path: {display_path}/")
+        self.path_label.setText(f" {display_path} 📂")
+        self.path_label.setStyleSheet("font-size: 20pt; color: black;")
 
         contents = browse_gcs_path(self)
 

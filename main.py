@@ -28,11 +28,11 @@ import tempfile
 #import search_core
 from search_core import simple_keyword_search
 from document_parsers import extract_text_and_images_from_pdf
-from config_reader import API_main, BUCKET_NAME
+from config_reader import API_main, BUCKET_NAME, CLIENT_PREFIX_TO_STRIP
 from gcs_path_browser import GCSBrowserDialog, check_sync
 from ui_setup import non_sync_cloud_str, sync_cloud_str
 import pytesseract
-
+from utils import CHECKBOX_STYLE_QSS_black, CHECKBOX_STYLE_QSS_gray
 pytesseract.pytesseract.tesseract_cmd = r'C:\\Program Files\Tesseract-OCR\tesseract.exe'
 
 chat_gpt = False
@@ -177,7 +177,7 @@ def start_monitoring_job():
     )
     poll_thread.start()
 
-def on_search_button_clicked(self, query, directory_path):
+def on_search_button_clicked(self, query, directory_path ,force_chat = False):
     # הפונקציה המדויקת ששלחת, בתוספת לוגיקת עיבוד התוצאה.
     #self.search_button.setEnabled(False)
     #self.progressBar.setValue(0)  # Reset the progress bar
@@ -221,7 +221,7 @@ def on_search_button_clicked(self, query, directory_path):
             }
 
         start_time = time.time()
-        if not self.cloud_gemini_radio.isChecked():
+        if not self.cloud_gemini_radio.isChecked() and not force_chat:
             results_data = simple_keyword_search(query, directory_path, str1_mode, str2_mode, str3_mode)
             formatted_output = format_simple_search_results(results_data)
             return formatted_output
@@ -962,9 +962,10 @@ class SearchApp(QtWidgets.QWidget):
         super().__init__()
 
         ui_setup.setup_ui(self)
-        result = check_sync("C:\\a\\מצרפי\\גירושין", BUCKET_NAME, prefix='גירושין')
+        result = check_sync(CLIENT_PREFIX_TO_STRIP+"/גירושין/", BUCKET_NAME, prefix='גירושין')
         sync0 = result["sync!"]
-        self.update_gcs_radio(sync0)
+        self.sync0 = sync0
+        self.update_gcs_radio()
 
         response = requests.get(API_cache_status_url)
         response_str = response.content.decode('utf-8').strip()
@@ -1179,35 +1180,56 @@ class SearchApp(QtWidgets.QWidget):
         query = self.search_input.text().strip()
         self.results_area.clear()
 
-        if self.cloud_gemini_radio.isChecked():
-            normalized_path = folder.replace("\\", "/")
-            prefix_to_strip = CLIENT_PREFIX_TO_STRIP.replace("\\", "/")
-            # 3. Strip trailing slashes from both for consistent comparison (e.g., C:/a/מצרפי/)
-            normalized_path = normalized_path.strip('/')
-            prefix_to_strip = prefix_to_strip.strip('/')
+        if self.cloud_gemini_radio.isChecked() or (self.non_cloud_gemini_radio.isChecked() and self.gemini_radio.isChecked()):
 
-            # 4. Perform the strip only if the path starts with the prefix
-            if normalized_path.lower().startswith(prefix_to_strip.lower()):
-                # Strip the prefix, plus the slash that separates the prefix from the folder path
-                gcs_directory_path = normalized_path[len(prefix_to_strip):].strip('/')
+            if not self.sync0 or self.gemini_radio.isChecked():
+                if  self.non_cloud_gemini_radio.isChecked():
+                    self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
+                    self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_gray)
+                    self.display_root.setText("☁️ Bucket")
+                    self.display_root.setStyleSheet("color: white; background-color: lightblue;")
+                    QtWidgets.QApplication.processEvents()
+
+                normalized_path = folder.replace("\\", "/")
+                prefix_to_strip = CLIENT_PREFIX_TO_STRIP.replace("\\", "/")
+                # 3. Strip trailing slashes from both for consistent comparison (e.g., C:/a/מצרפי/)
+                normalized_path = normalized_path.strip('/')
+                prefix_to_strip = prefix_to_strip.strip('/')
+
+                # 4. Perform the strip only if the path starts with the prefix
+                if normalized_path.lower().startswith(prefix_to_strip.lower()):
+                    # Strip the prefix, plus the slash that separates the prefix from the folder path
+                    gcs_directory_path = normalized_path[len(prefix_to_strip):].strip('/')
+                else:
+                    # If no prefix match, use the normalized path as is
+                    gcs_directory_path = normalized_path.strip('/')
+
+                folder = gcs_directory_path
+
+                end_time = time.time()
+                latency = end_time - start_time
+                print(f"pre on_search_button_clicked: {latency:.2f} seconds")
+
+                answer = on_search_button_clicked(self, query, folder, self.non_cloud_gemini_radio.isChecked())
+
+
+                #perform_search(query, directory_path=folder)
+                display_gemini_result(self, self.results_area, answer, folder)
+
+                if self.non_cloud_gemini_radio.isChecked():
+                    self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
+                    self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_gray)
+                    self.display_root.setText(CLIENT_PREFIX_TO_STRIP)
+                    
+
+                return
             else:
-                # If no prefix match, use the normalized path as is
-                gcs_directory_path = normalized_path.strip('/')
-
-            # ... gcs_directory_path (now 'גירושין/2024') is used for GCS listing
-
-            folder = gcs_directory_path
-
-            end_time = time.time()
-            latency = end_time - start_time
-            print(f"pre on_search_button_clicked: {latency:.2f} seconds")
-
-            answer = on_search_button_clicked(self, query, folder)
+                self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
+                self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_gray)
+                self.display_root.setText(CLIENT_PREFIX_TO_STRIP)
 
 
-            #perform_search(query, directory_path=folder)
-            display_gemini_result(self, self.results_area, answer, folder)
-            return
+
 
         folder = self.display_root.text() +  "/"+ folder
         if not os.path.isdir(folder):
@@ -1321,6 +1343,12 @@ class SearchApp(QtWidgets.QWidget):
                     except:
                         continue
 
+        if self.cloud_gemini_radio.isChecked() and self.sync0:
+            self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
+            self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_gray)
+            self.display_root.setText("☁️ Bucket")
+            self.display_root.setStyleSheet("color: white; background-color: lightblue;")
+
         if  not self.gemini_radio.isChecked():
             if total_found == 0:
                 self.results_area.append("לא נמצאו תוצאות.")
@@ -1387,13 +1415,13 @@ class SearchApp(QtWidgets.QWidget):
         except:
             pass
 
-    def update_gcs_radio(self,sync0):
-        if sync0:
+    def update_gcs_radio(self):
+        if self.sync0:
             self.cloud_gemini_radio.setText(sync_cloud_str)
-            self.display_root.setStyleSheet("color: blue;")
+            self.display_root.setStyleSheet("color: white; background-color: black;")
         else:
             self.cloud_gemini_radio.setText(non_sync_cloud_str)
-            self.display_root.setStyleSheet("color: red;")
+            self.display_root.setStyleSheet("color: red; background-color: black;")
 
 
     def handle_radio_check(self):
@@ -1402,22 +1430,30 @@ class SearchApp(QtWidgets.QWidget):
             self.display_root.setText(CLIENT_PREFIX_TO_STRIP)
             self.display_root.setStyleSheet("color: black;")
             self.setWindowTitle(f"הדס לוי -  עורך דין - תוכנת חיפוש " + f" Hard Disk")
+            self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
+            self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_gray)
+
+
+
         else:
             #white_cloud = '<span style="color: white;">☁️</span>'
             #black_bucket = '<span style="color: black;"> Bucket</span>'
             #self.display_root.setText(white_cloud + black_bucket)
 
             self.display_root.setText("☁️ Bucket")
-            result = check_sync("C:\\a\\מצרפי\\גירושין", BUCKET_NAME, prefix='גירושין')
+            result = check_sync(CLIENT_PREFIX_TO_STRIP+"/גירושין/", BUCKET_NAME, prefix='גירושין')
             sync0 = result["sync!"]
-            self.update_gcs_radio(sync0)
-            if sync0:
-                self.display_root.setStyleSheet("color: blue;")
+            self.sync0 = sync0
+            self.update_gcs_radio()
+            if self.sync0:
+                self.display_root.setStyleSheet("color: white; background-color: lightblue;")
             else:
-                self.display_root.setStyleSheet("color: red;")
+                self.display_root.setStyleSheet("color: red; background-color: lightblue;")
 
             self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_run_rev}")
 
+            self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
+            self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_gray)
 
     def append_result(self, filepath, paragraph, search_terms):
         # Highlight search terms in paragraph
