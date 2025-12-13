@@ -28,11 +28,12 @@ import tempfile
 #import search_core
 from search_core import simple_keyword_search
 from document_parsers import extract_text_and_images_from_pdf
-from config_reader import API_main, BUCKET_NAME, CLIENT_PREFIX_TO_STRIP
+from config_reader import API_main, BUCKET_NAME, CLIENT_PREFIX_TO_STRIP, emailsec
 from gcs_path_browser import GCSBrowserDialog, check_sync
+from email_searcher import EmailSearchWorker, EMAIL_PROVIDERS
 from ui_setup import non_sync_cloud_str, sync_cloud_str
 import pytesseract
-from utils import CHECKBOX_STYLE_QSS_black, CHECKBOX_STYLE_QSS_gray
+from utils import CHECKBOX_STYLE_QSS_black, CHECKBOX_STYLE_QSS_gray, Container_STYLE_QSSgray, Container_STYLE_QSS
 pytesseract.pytesseract.tesseract_cmd = r'C:\\Program Files\Tesseract-OCR\tesseract.exe'
 
 chat_gpt = False
@@ -960,6 +961,8 @@ def docx_search(path, words, mode='any', search_mode='partial'):
 class SearchApp(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
+        self.email_worker = None
+        self.thread = None
 
         ui_setup.setup_ui(self)
         result = check_sync(CLIENT_PREFIX_TO_STRIP+"/גירושין/", BUCKET_NAME, prefix='גירושין')
@@ -1005,12 +1008,7 @@ class SearchApp(QtWidgets.QWidget):
         if self.gemini_radio.isChecked():
             self.search_btn.setText(ui_setup.gemini_radio_str)
             self.label.setText(ui_setup.label_gpt_str)
-            #self.g1_container.setVisible(False)
-            #self.setPlaceholderText(ui_setup.search_input_question_str)
             self.g_group_widget.setVisible(False)
-            #layout.removeWidget(self.g1_container)
-            #layout.removeWidget(self.g_group_widget)
-            #layout.insertItem(self.g1_layout_index, self.g1_placeholder)
 
             self.nongemini_radio.setStyleSheet("""
                 QRadioButton {
@@ -1059,8 +1057,6 @@ class SearchApp(QtWidgets.QWidget):
 
             # 3. Insert the container widget back into the layout
             # The index should be safe if the spacer was removed.
-            #layout.insertWidget(self.g1_layout_index, self.g1_container)
-            #layout.insertWidget(self.g1_layout_index, self.g_group_widget)
 
             self.nongemini_radio.setStyleSheet("""
                 QRadioButton {
@@ -1220,7 +1216,7 @@ class SearchApp(QtWidgets.QWidget):
                     self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
                     self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_gray)
                     self.display_root.setText(CLIENT_PREFIX_TO_STRIP)
-                    
+
 
                 return
             else:
@@ -1361,6 +1357,73 @@ class SearchApp(QtWidgets.QWidget):
                 f.write(self.dir_edit.text().strip())
         except:
             pass
+
+    def display_email_results(self, results):
+        # This method runs in the main GUI thread and receives 'results' list
+        self.dir_edit.setText(self.folder_tmp)
+        self.search_input.setText(self.query_tmp)
+        self.g31_container.setStyleSheet(Container_STYLE_QSSgray)
+
+        self.results_area.append("\n--- Email Search Results ---")
+        for result in results:
+            self.results_area.append(result)
+
+    def email_search(self):
+        self.g31_container.setStyleSheet(Container_STYLE_QSS)
+        self.folder_tmp = self.dir_edit.text().strip()
+        self.query_tmp = self.search_input.text().strip()
+        query = self.query_tmp
+        folder = "INBOX"
+        self.dir_edit.setText(folder)
+
+        QtWidgets.QApplication.processEvents()
+        # --- ASSUME THESE ARE READ FROM NEW GUI INPUTS OR A CONFIG FILE ---
+        email_user = "orenma@gmail.com" #self.email_user_input.text()  # e.g., user@walla.co.il
+        email_password = "netj diso xxfv syqi" #emailsec #self.email_password_input.text()
+
+        # Get the provider type (e.g., from a dropdown/combobox)
+        provider_key = "gmail" #self.provider_dropdown.currentText().lower()  # e.g., 'walla'
+
+        # Use the centralized dictionary to get server info
+        provider_info = EMAIL_PROVIDERS.get(provider_key, {})
+        server = provider_info.get("server")
+        port = provider_info.get("port")
+
+        if not server or not port:
+            # Handle case where provider is not recognized
+            self.results_area.append("ERROR: Selected email provider settings not found.")
+            return
+
+        # --- Instantiation with all parameters ---
+        self.email_worker = EmailSearchWorker(
+            query,
+            folder,
+            email_user,
+            email_password,
+            server,
+            port
+        )
+
+        self.thread = QtCore.QThread()
+
+        # 2. Move worker to the new thread
+        self.email_worker.moveToThread(self.thread)
+
+        # 3. Connect signals:
+        #    a) When the thread starts, execute the worker's run() method.
+        self.thread.started.connect(self.email_worker.run)
+
+        #    b) When the worker finishes (emits the signal), process results and clean up.
+        self.email_worker.search_finished.connect(self.display_email_results)
+        self.email_worker.search_finished.connect(self.thread.quit)  # Stops the thread loop
+
+        #    c) Optional cleanup: delete worker and thread objects when thread finishes
+        self.thread.finished.connect(self.email_worker.deleteLater)
+        self.thread.finished.connect(self.thread.deleteLater)
+
+        # 4. Start the thread (This runs worker.run() safely in the background)
+        self.thread.start()
+
 
 
     def browse_directory(self):

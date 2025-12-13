@@ -122,7 +122,14 @@ Container_STYLE_QSS="""
                      padding: 5px;
                  }
              """
-
+Container_STYLE_QSSgray="""
+                 QWidget {
+                     background-color: #F0F0F0; /* Alice Blue background */
+                     border: 2px solid #6495ED; /* Cornflower Blue border */
+                     border-radius: 6px;
+                     padding: 5px;
+                 }
+             """
 Radio_STYLE_QSS_red="""
             QRadioButton::indicator {
                 width: 15px;

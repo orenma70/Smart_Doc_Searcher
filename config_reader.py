@@ -40,3 +40,4 @@ API_cache_status_url = API_main + read_setup("API_cache_status_url")
 
 CLIENT_PREFIX_TO_STRIP=read_setup("CLIENT_PREFIX_TO_STRIP")
 LOCAL_MODE=read_setup("LOCAL_MODE")
+emailsec=read_setup("emailsec")

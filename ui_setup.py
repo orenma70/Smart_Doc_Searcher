@@ -3,7 +3,7 @@ from google.genai import types
 from config_reader import LOCAL_MODE, CLIENT_PREFIX_TO_STRIP
 from utils import (CHECKBOX_STYLE_QSS_black, CHECKBOX_STYLE_QSS_gray, CHECKBOX_STYLE_QSS_blue, CHECKBOX_STYLE_QSS_red,
                    Container_STYLE_QSS, Radio_STYLE_QSS_green, Radio_STYLE_QSS_red, QRadioButton_STYLE_QSS_green_1515bg,QRadioButton_STYLE_QSS_green_1616bg,
-                   QRadioButton_STYLE_QSS_green_1520bg)
+                   QRadioButton_STYLE_QSS_green_1520bg, Container_STYLE_QSSgray)
 Vertic_Flag = True
 isLTR = False # left to right or RTL
 chat_mode = True
@@ -18,7 +18,7 @@ if isLTR:
 
 
     btn_browse_str = "Choose Search Folder"
-    tik_str = "Folder --->"
+    tik_str = "Folder 📂 --->"
     dir_edit_alignment_choice = QtCore.Qt.AlignmentFlag.AlignLeft
     dir_edit_LayoutDirection = QtCore.Qt.LayoutDirection.LeftToRight
     search_btn_str = " Start Search !!"
@@ -30,7 +30,7 @@ if isLTR:
 
     nongemini_radio_str = " Keyword Matching"  # Semantic Search "
     gemini_radio_str = " Ask Chat "
-
+    email_push_str = "✉️  Search Email  "
     exact_search_radio_str = " Match full word "
     partial_search_radio_str = " Match partially "
     all_word_search_radio_str = " All Words "
@@ -59,12 +59,12 @@ else:
     label_gpt_str = " הכנסת השאלה ✏️-->"
     #search_input_words_str = "Enter here search words"
     search_input_question_str = "הכנסת השאלה"
-    setText_str =  "ללימודי"  #  "מי היא חברת הליסינג?"     "מה גיל הילדים?"    "מי האקטואר?
+    setText_str =  "SmartSearch"  #  "מי היא חברת הליסינג?"     "מה גיל הילדים?"    "מי האקטואר? "ללימודי"
     clear_btn_str = " ניקוי 🗑️ "
 
     nongemini_radio_str = "  חיפוש מילים  "
     gemini_radio_str = " שאל את הצ'אט "
-
+    email_push_str = "✉️  חפש באימייל "
     exact_search_radio_str = " התאמה מלאה "
     partial_search_radio_str = " התאמה חלקית "
     all_word_search_radio_str = " כל המילים "
@@ -251,6 +251,7 @@ def setup_ui(self):
 
     layout.addLayout(search_layout)
     self.nongemini_radio = QtWidgets.QRadioButton(nongemini_radio_str)
+    self.email_push = QtWidgets.QPushButton(email_push_str)
     #if not chat_mode:
     #self.nongemini_radio.setChecked(True)
 
@@ -276,7 +277,9 @@ def setup_ui(self):
 
 
     self.gemini_radio.setFont(font2)
-
+    self.email_push.setFont(font2)
+    self.email_push.setStyleSheet(QRadioButton_STYLE_QSS_green_1515bg)
+    self.email_push.clicked.connect(self.email_search)
     # In your setup_ui, after creating the radio button:
     self.gemini_radio.toggled.connect(self.update_search_button_text)
 
@@ -359,17 +362,23 @@ def setup_ui(self):
     #g2_layout.addWidget(self.clear_btn)
 
     g3_container = QtWidgets.QWidget()
+    g31_container = QtWidgets.QWidget()
 
     if Vertic_Flag:
         g3_layout = QtWidgets.QVBoxLayout(g3_container)
+        g31_layout = QtWidgets.QVBoxLayout(g31_container)
     else:
         g3_layout = QtWidgets.QHBoxLayout(g3_container)
+        g31_layout = QtWidgets.QVBoxLayout(g31_container)
+
 
     g3_layout.addWidget(self.nongemini_radio)
     g3_layout.addWidget(self.gemini_radio)
+    g31_layout.addWidget(self.email_push)
     g3_layout.addStretch()
 
     g3_container.setStyleSheet(Container_STYLE_QSS)
+    g31_container.setStyleSheet(Container_STYLE_QSSgray)
     small_gap = 10
     g11_container = QtWidgets.QWidget()
     g11_layout = QtWidgets.QHBoxLayout(g11_container)
@@ -440,8 +449,9 @@ def setup_ui(self):
 
     self.g1_placeholder = QtWidgets.QSpacerItem(self.g1_container_width, 1, QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
 
-    g_group_layout = QtWidgets.QHBoxLayout(self.e_group_widget)
+    g_group_layout = QtWidgets.QVBoxLayout(self.e_group_widget)
     g_group_layout.addWidget(g3_container)
+    g_group_layout.addWidget(g31_container)
 
     if chat_mode:
         self.g_group_widget.setVisible(False)
@@ -471,7 +481,7 @@ def setup_ui(self):
 
     g1_container.setToolTip("איך לחפש, 1 האם כל המילה מופיעה 2 האם רק חלקה ")
     g2_container.setToolTip("ניקוי מסך התוצאות ומסך הבקשות")
-    g3_container.setToolTip("איך לחפש. 1 מילים במסמך 2 לשאול את צ'אט GPT")
+    g3_container.setToolTip("איך לחפש. 1 מילים במסמך. 2 לשאול את הצ'אט. 3 לחפש באימייל. ")
 
     # Create the label
 
@@ -491,6 +501,7 @@ def setup_ui(self):
 
     self.g1_container = g1_container
     self.g3_container = g3_container
+    self.g31_container = g31_container
     self.g11_container = g11_container
     self.g12_container = g12_container
     self.both_groups_layout = both_groups_layout
