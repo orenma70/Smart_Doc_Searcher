@@ -59,7 +59,7 @@ else:
     label_gpt_str = " הכנסת השאלה ✏️-->"
     #search_input_words_str = "Enter here search words"
     search_input_question_str = "הכנסת השאלה"
-    setText_str =  "SmartSearch"  #  "מי היא חברת הליסינג?"     "מה גיל הילדים?"    "מי האקטואר? "ללימודי"
+    setText_str =  "טסלה"  #  "מי היא חברת הליסינג?"     "מה גיל הילדים?"    "מי האקטואר? "ללימודי"
     clear_btn_str = " ניקוי 🗑️ "
 
     nongemini_radio_str = "  חיפוש מילים  "

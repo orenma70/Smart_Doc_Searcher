@@ -30,6 +30,7 @@ from search_core import simple_keyword_search
 from document_parsers import extract_text_and_images_from_pdf
 from config_reader import API_main, BUCKET_NAME, CLIENT_PREFIX_TO_STRIP, emailsec
 from gcs_path_browser import GCSBrowserDialog, check_sync
+from email_option_gui import launch_search_dialog
 from email_searcher import EmailSearchWorker, EMAIL_PROVIDERS
 from ui_setup import non_sync_cloud_str, sync_cloud_str
 import pytesseract
@@ -1360,23 +1361,33 @@ class SearchApp(QtWidgets.QWidget):
 
     def display_email_results(self, results):
         # This method runs in the main GUI thread and receives 'results' list
-        self.dir_edit.setText(self.folder_tmp)
-        self.search_input.setText(self.query_tmp)
+
         self.g31_container.setStyleSheet(Container_STYLE_QSSgray)
 
+        if not results:
+            return
+
         self.results_area.append("\n--- Email Search Results ---")
+
         for result in results:
             self.results_area.append(result)
 
     def email_search(self):
         self.g31_container.setStyleSheet(Container_STYLE_QSS)
-        self.folder_tmp = self.dir_edit.text().strip()
-        self.query_tmp = self.search_input.text().strip()
-        query = self.query_tmp
-        folder = "INBOX"
-        self.dir_edit.setText(folder)
+        #QtWidgets.QApplication.processEvents()
 
-        QtWidgets.QApplication.processEvents()
+        params=launch_search_dialog()
+
+
+        if not params:
+            self.display_email_results("")
+            return
+
+        query = params["query"]
+        folder = params["directory"]
+
+
+
         # --- ASSUME THESE ARE READ FROM NEW GUI INPUTS OR A CONFIG FILE ---
         email_user = "orenma@gmail.com" #self.email_user_input.text()  # e.g., user@walla.co.il
         email_password = "netj diso xxfv syqi" #emailsec #self.email_password_input.text()

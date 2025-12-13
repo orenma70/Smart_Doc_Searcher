@@ -3,7 +3,8 @@ import imaplib
 import email
 import email.header
 import socket  # Added for connection timeout handling
-from utils import  Container_STYLE_QSSgray
+
+
 
 EMAIL_PROVIDERS = {
     "gmail": {
@@ -71,16 +72,31 @@ class EmailSearchWorker(QObject):
 
             # Full search criteria string, ready to be encoded:
             search_criteria = f'{imap_search_prefix} "{self.query}"'
+            quoted_query = f'"{self.query}"'
+            search_criteria = f'CHARSET utf-8 {imap_search_prefix} {quoted_query}'
+            #search_criteria = f'{imap_search_prefix} "{self.query}"'
+            encoded_criteria = search_criteria.encode('utf-8')
 
             # 3. Execute the search command. The first argument is the CHARSET,
             #    and the second is the fully constructed command string (as bytes).
             #    This method forces imaplib to handle the complex encoding correctly.
-
+            search_criteria_args = (
+                'CHARSET',  # Argument 1: The key for encoding
+                'UTF-8',  # Argument 2: The encoding value
+                imap_search_prefix,  # Argument 3: The IMAP search key (e.g., 'BODY')
+                self.query.encode('utf-8')  # Argument 4: The query value (as a byte literal)
+            )
             # Encode the command *after* adding the quotes
-            encoded_criteria = search_criteria.encode('utf-8')
 
-            # The search call uses 'UTF-8' as the charset argument, and the encoded criteria
-            status, data = mail.search('UTF-8', encoded_criteria)
+
+             # The search call uses 'UTF-8' as the charset argument, and the encoded criteria
+            #status, data = mail.search('UTF-8', encoded_criteria)
+            #status, data = mail.search(*search_criteria_args)
+            status, data = mail.search("UTF-8", f'(BODY {quoted_query})')
+
+
+
+
 
             if status == 'OK':
                 # Data contains a space-separated list of email IDs (e.g., b'1 2 3')
