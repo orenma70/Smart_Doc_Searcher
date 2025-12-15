@@ -1375,7 +1375,7 @@ class SearchApp(QtWidgets.QWidget):
         directory = search_params["directory"]
         date_from_ts = search_params["date_from_ts"]
         date_to_ts = search_params["date_to_ts"]+86400 # add 24*3600sec hours to the end of day
-        from_address = search_params["from_address"].lower()
+        from_address = search_params["fromto_address"].lower()
         self.results_area.append(f"\n--- Email Search Results --- <span {BLUE_STYLE}>{query}</span> in <span {BLUE_STYLE}>{directory}</span>")
         email_address = email_name = ""
         for result in results[1:]:
@@ -1439,7 +1439,7 @@ class SearchApp(QtWidgets.QWidget):
 
         query = params["query"]
         folder = params["directory"]
-        gmail_raw_query = params["gmail_raw_query"]
+        gmail_raw_query = params
 
 
         # --- ASSUME THESE ARE READ FROM NEW GUI INPUTS OR A CONFIG FILE ---

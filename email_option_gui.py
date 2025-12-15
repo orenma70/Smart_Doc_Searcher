@@ -97,21 +97,14 @@ class EmailSearchDialog(QDialog):
         basic_search_layout.addWidget(self.directory_input, 1, 1, 1, 3)
 
         # --- Row 2: From/To ---
-        from_label = QLabel("From:")
-        from_label.setStyleSheet(FONT_SIZE_QSS)
-        basic_search_layout.addWidget(from_label, 2, 0)  # Now in Row 2
+        self.fromto_label = QLabel("From:")
+        self.fromto_label.setStyleSheet(FONT_SIZE_QSS)
+        basic_search_layout.addWidget(self.fromto_label, 2, 0)  # Now in Row 2
 
-        self.from_input = QLineEdit()
-        self.from_input.setStyleSheet(FONT_SIZE_QSS)
-        basic_search_layout.addWidget(self.from_input, 2, 1)  # Now in Row 2
+        self.fromto_input = QLineEdit()
+        self.fromto_input.setStyleSheet(FONT_SIZE_QSS)
+        basic_search_layout.addWidget(self.fromto_input, 2, 1)  # Now in Row 2
 
-        to_label = QLabel("To:")
-        to_label.setStyleSheet(FONT_SIZE_QSS)
-        basic_search_layout.addWidget(to_label, 2, 2)  # Now in Row 2
-
-        self.to_input = QLineEdit()
-        self.to_input.setStyleSheet(FONT_SIZE_QSS)
-        basic_search_layout.addWidget(self.to_input, 2, 3)  # Now in Row 2
 
         main_layout.addLayout(basic_search_layout)
 
@@ -156,7 +149,8 @@ class EmailSearchDialog(QDialog):
         minsizelable.setStyleSheet(FONT_SIZE_QSS)
         size_layout.addWidget(minsizelable)
         self.min_size_input = QSpinBox()
-        self.min_size_input.setRange(0, 100000)
+        self.min_size_input.setValue(100)
+        self.min_size_input.setRange(0, 10000000)
         size_layout.addWidget(self.min_size_input)
         misc_layout.addLayout(size_layout)
 
@@ -164,6 +158,22 @@ class EmailSearchDialog(QDialog):
         filter_layout.addWidget(misc_group)
 
         main_layout.addLayout(filter_layout)
+        self.directory_input.currentTextChanged.connect(self.update_fromto_label)
+
+    def update_fromto_label(self, selected_directory):
+
+        # We can check for 'INBOX' or 'SENT' (case-insensitive for robustness)
+        cleaned_dir = selected_directory.upper()
+
+        if "SENT" in cleaned_dir:
+            # For the SENT folder, the user probably wants to see who they sent it TO
+            self.fromto_label.setText("To:")
+        elif "INBOX" in cleaned_dir or "TRASH" in cleaned_dir:
+            # For INBOX/TRASH, the user probably wants to see who it's FROM
+            self.fromto_label.setText("From:")
+        else:
+            self.fromto_label.setText("From:")
+
 
     def get_search_parameters(self):
         """Gathers all input values."""
@@ -183,8 +193,7 @@ class EmailSearchDialog(QDialog):
         return {
             "query": query,
             "directory": directory,
-            "from_address": self.from_input.text(),
-            "to_address": self.to_input.text(),
+            "fromto_address": self.fromto_input.text(),
             "has_attachment": self.has_attachment_check.isChecked(),
             "date_from_ts": date_from_ts,
             "date_to_ts": date_to_ts,
