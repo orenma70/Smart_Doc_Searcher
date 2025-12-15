@@ -106,9 +106,16 @@ class EmailSearchWorker(QObject):
              # The search call uses 'UTF-8' as the charset argument, and the encoded criteria
             #status, data = mail.search('UTF-8', encoded_criteria)
             #status, data = mail.search(*search_criteria_args)
-            gmail_raw_query = self.gmail_raw_query
+            params = self.gmail_raw_query
+            min_size_kb=str(1024*(params["min_size_kb"]+122)) # add 122k for minimal text
+            has_attach = str(params["has_attachment"])
+            #status, data = mail.search("UTF-8", 'X-GM-RAW', gmail_raw_query)  # ,
 
-            status, data = mail.search("UTF-8", 'X-GM-RAW', gmail_raw_query)  # ,
+            if has_attach == "True":
+                status, data = mail.search("UTF-8", 'BODY', f'"{self.query}"','LARGER',min_size_kb)
+            else:
+                status, data = mail.search("UTF-8", 'BODY', f'"{self.query}"')
+
             #status, data = mail.search("UTF-8",  gmail_raw_query) # 'X-GM-RAW',
 
 
