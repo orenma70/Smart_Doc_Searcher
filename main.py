@@ -1,4 +1,5 @@
 import sys
+import email.utils
 import os, io
 import json
 import requests
@@ -28,7 +29,7 @@ import tempfile
 #import search_core
 from search_core import simple_keyword_search
 from document_parsers import extract_text_and_images_from_pdf
-from config_reader import API_main, BUCKET_NAME, CLIENT_PREFIX_TO_STRIP, emailsec
+from config_reader import API_main, BUCKET_NAME, CLIENT_PREFIX_TO_STRIP, email_str
 from gcs_path_browser import GCSBrowserDialog, check_sync
 from email_option_gui import launch_search_dialog
 from email_searcher import EmailSearchWorker, EMAIL_PROVIDERS
@@ -1361,23 +1362,76 @@ class SearchApp(QtWidgets.QWidget):
 
     def display_email_results(self, results):
         # This method runs in the main GUI thread and receives 'results' list
-
+        BLUE_STYLE = 'style="color: blue; font-weight: bold;"'
         self.g31_container.setStyleSheet(Container_STYLE_QSSgray)
 
         if not results:
             return
 
-        self.results_area.append("\n--- Email Search Results ---")
+        email_type = results[0]
+        search_params = self.email_search_params
 
-        for result in results:
-            self.results_area.append(result)
+        query = search_params["query"]
+        directory = search_params["directory"]
+        date_from_ts = search_params["date_from_ts"]
+        date_to_ts = search_params["date_to_ts"]+86400 # add 24*3600sec hours to the end of day
+        from_address = search_params["from_address"].lower()
+        self.results_area.append(f"\n--- Email Search Results --- <span {BLUE_STYLE}>{query}</span> in <span {BLUE_STYLE}>{directory}</span>")
+        email_address = email_name = ""
+        for result in results[1:]:
+            email_date_string = None
+            email_timestamp = 0
+
+            # --- 1. Date Extraction and Conversion ---
+            lines = result.splitlines()
+            email_from = ""
+            # Iterate through the lines of the current email block (result)
+            for line in lines:
+                if line.startswith('Date:'):
+                    # Extract the date string
+                    parts = line.split(':', 1)
+                    email_date_string = parts[1].strip()
+
+                    # Convert to timestamp
+                    time_tuple_tz = email.utils.parsedate_tz(email_date_string)
+                    if time_tuple_tz:
+                        email_timestamp = email.utils.mktime_tz(time_tuple_tz)
+
+                elif line.startswith('From:'):
+                    parts = line.split(':', 1)
+                    email_from = parts[1].strip()
+                    email_name, email_address = email.utils.parseaddr(email_from)
+                    # --- 3. Extract Subject ---
+                elif line.startswith('Subject:'):
+                    parts = line.split(':', 1)
+                    email_subject = parts[1].strip()
+
+                    # --- 2. Filtering Logic ---
+
+            # If the date couldn't be parsed, we might want to skip or include it.
+            # Assuming we skip if the date is invalid (email_timestamp == 0)
+
+            # Check the range: email_timestamp must be BETWEEN the from and to dates.
+            # We use inclusive checks for the boundary dates.
+            Time_Flag = date_from_ts <= email_timestamp <= date_to_ts
+            From_Flag = not from_address or from_address in email_address.lower() or email_name == from_address
+
+            if Time_Flag and From_Flag:
+                # 3. Success: The email is in range, so append it.
+                self.results_area.append(result)
+            else:
+                # 4. Failure: The email is outside the range.
+                # Use 'continue' to skip the rest of this 'result' block and move to the next one.
+                continue  # Skip to the next email block
+
+
 
     def email_search(self):
         self.g31_container.setStyleSheet(Container_STYLE_QSS)
         #QtWidgets.QApplication.processEvents()
 
         params=launch_search_dialog()
-
+        self.email_search_params = params
 
         if not params:
             self.display_email_results("")
@@ -1385,15 +1439,20 @@ class SearchApp(QtWidgets.QWidget):
 
         query = params["query"]
         folder = params["directory"]
-
+        gmail_raw_query = params["gmail_raw_query"]
 
 
         # --- ASSUME THESE ARE READ FROM NEW GUI INPUTS OR A CONFIG FILE ---
-        email_user = "orenma@gmail.com" #self.email_user_input.text()  # e.g., user@walla.co.il
-        email_password = "netj diso xxfv syqi" #emailsec #self.email_password_input.text()
+        email_user = email_str #self.email_user_input.text()  # e.g., user@walla.co.il
 
-        # Get the provider type (e.g., from a dropdown/combobox)
-        provider_key = "gmail" #self.provider_dropdown.currentText().lower()  # e.g., 'walla'
+
+        # Use re.findall() to extract all matches (the text within the capturing group)
+        provider_key = re.findall(r'@(.*?)\.', email_user)
+        provider_key=provider_key[0]
+        if provider_key == "gmail":
+            email_password = "netj diso xxfv syqi"
+        else:
+            email_password = "Jmjmjm2004"
 
         # Use the centralized dictionary to get server info
         provider_info = EMAIL_PROVIDERS.get(provider_key, {})
@@ -1412,7 +1471,9 @@ class SearchApp(QtWidgets.QWidget):
             email_user,
             email_password,
             server,
-            port
+            port,
+            gmail_raw_query,
+            provider_key
         )
 
         self.thread = QtCore.QThread()

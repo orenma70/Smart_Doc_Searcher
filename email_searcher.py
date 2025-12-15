@@ -1,5 +1,5 @@
 from PyQt5.QtCore import QObject, pyqtSignal
-import imaplib
+import imaplib, ssl
 import email
 import email.header
 import socket  # Added for connection timeout handling
@@ -27,7 +27,7 @@ class EmailSearchWorker(QObject):
     # Signal to send results back to the GUI (list of strings)
     search_finished = pyqtSignal(list)
 
-    def __init__(self, query, folder, email_user, email_password, imap_server, imap_port, parent=None):
+    def __init__(self, query, folder, email_user, email_password, imap_server, imap_port, gmail_raw_query, provider_key, parent=None):
         super().__init__(parent)
         self.query = query
         self.folder = folder
@@ -35,9 +35,12 @@ class EmailSearchWorker(QObject):
         self.password = email_password
         self.server = imap_server
         self.port = imap_port
+        self.gmail_raw_query = gmail_raw_query
+        self.provider_key = provider_key
 
     def run(self):
         results = []
+        results.append(self.provider_key)
         mail = None  # Initialize mail to None for finally block check
 
         try:
@@ -46,11 +49,21 @@ class EmailSearchWorker(QObject):
 
             # 1. Connect and Login
             mail = imaplib.IMAP4_SSL(self.server, self.port)
+
             mail.login(self.user, self.password)
 
             # 2. Select Mailbox (Folder)
             # The folder name is often case-sensitive (e.g., 'INBOX', not 'inbox')
-            status, data = mail.select(self.folder, readonly=True)
+
+            mail_dir =self.folder
+
+            if self.provider_key == "gmail" and "sent"  in mail_dir.lower():
+                status, data = mail.select('"[Gmail]/Sent Mail"', readonly=True)
+            else:
+                status, data = mail.select(self.folder, readonly=True)
+
+
+
 
             if status != 'OK':
                 raise ValueError(f"Could not select mailbox '{self.folder}'. Check folder name.")
@@ -73,6 +86,7 @@ class EmailSearchWorker(QObject):
             # Full search criteria string, ready to be encoded:
             search_criteria = f'{imap_search_prefix} "{self.query}"'
             quoted_query = f'"{self.query}"'
+            quoted_query.encode("utf-8")
             search_criteria = f'CHARSET utf-8 {imap_search_prefix} {quoted_query}'
             #search_criteria = f'{imap_search_prefix} "{self.query}"'
             encoded_criteria = search_criteria.encode('utf-8')
@@ -92,7 +106,10 @@ class EmailSearchWorker(QObject):
              # The search call uses 'UTF-8' as the charset argument, and the encoded criteria
             #status, data = mail.search('UTF-8', encoded_criteria)
             #status, data = mail.search(*search_criteria_args)
-            status, data = mail.search("UTF-8", f'(BODY {quoted_query})')
+            gmail_raw_query = self.gmail_raw_query
+
+            status, data = mail.search("UTF-8", 'X-GM-RAW', gmail_raw_query)  # ,
+            #status, data = mail.search("UTF-8",  gmail_raw_query) # 'X-GM-RAW',
 
 
 
@@ -144,9 +161,6 @@ class EmailSearchWorker(QObject):
             error_message = f"General Email Search Error: {e}"
             results.append(f"--- ERROR: {error_message} ---")
 
-        #self.dir_edit.setText(folder_tmp)
-        #self.search_input.setText(query_tmp)
-        #self.g31_container.setStyleSheet(Container_STYLE_QSSgray)
 
         finally:
             # 6. Logout and Cleanup

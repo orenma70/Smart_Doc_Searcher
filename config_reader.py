@@ -1,4 +1,4 @@
-import os
+import os, re
 
 def read_setup(key_name, config_file="setup.txt"):
     # ... (function start)
@@ -23,12 +23,13 @@ def read_setup(key_name, config_file="setup.txt"):
 
                 # 4. Return the value if the key matches
                 if key == key_name:
-                    return value
+                    value = re.sub(r'#.*', '', value)
+                    return value.strip()
 
     # If the loop finishes without finding the key
     return None
 
-
+email_str=read_setup("email")
 BUCKET_NAME=read_setup("BUCKET_NAME")
 GCS_OCR_OUTPUT_PATH = "gs://" + BUCKET_NAME + "/vision_ocr_output/"
 

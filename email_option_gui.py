@@ -1,16 +1,21 @@
 import sys
 from PyQt5.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QLineEdit, QLabel, QPushButton, QDateTimeEdit, QCheckBox,
-    QGroupBox, QSpinBox, QDialogButtonBox,
+    QLineEdit, QLabel, QPushButton, QDateEdit, QCheckBox,
+    QGroupBox, QSpinBox, QDialogButtonBox, QComboBox
 )
-from PyQt5.QtCore import QDateTime, Qt, QObject, pyqtSignal
+
+
+from PyQt5.QtCore import QDate, Qt, QObject, pyqtSignal
 
 # --- Constants for Styling ---
-BUTTON_STYLE_OK = "background-color: #4CAF50; color: white; border-radius: 4px; padding: 6px;"
-BUTTON_STYLE_CANCEL = "background-color: #F44336; color: white; border-radius: 4px; padding: 6px;"
+BUTTON_STYLE_OK = "background-color: #0000FF; color: white; border-radius: 4px; padding: 6px; min-width: 150px; min-height: 30px;"
+BUTTON_STYLE_CANCEL = "background-color: #F44336; color: white; border-radius: 4px; padding: 6px; min-width: 150px; min-height: 20px;"
 
-FONT_SIZE_QSS = "font-size: 14pt;"
+
+
+
+FONT_SIZE_QSS = "font-size: 16pt;"
 
 class EmailSearchDialog(QDialog):
     """
@@ -37,14 +42,26 @@ class EmailSearchDialog(QDialog):
         main_layout.addWidget(criteria_group)
 
         # 2. Dialog Buttons (OK and Cancel)
-        self.button_box = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
-        )
-        main_layout.addWidget(self.button_box)
 
-        # Connect Signals
-        self.button_box.accepted.connect(self.accept_data)
-        self.button_box.rejected.connect(self.reject)
+        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+
+        ok_button = self.button_box.button(QDialogButtonBox.StandardButton.Ok)
+        cancel_button = self.button_box.button(QDialogButtonBox.StandardButton.Cancel)
+
+        if ok_button:
+            ok_button.setStyleSheet(BUTTON_STYLE_OK)
+        if cancel_button:
+            cancel_button.setStyleSheet(BUTTON_STYLE_CANCEL)
+
+            # 2c. Add the QDialogButtonBox directly to the main layout
+            main_layout.addWidget(self.button_box)
+
+            # 2d. Connect Signals (CORRECT SIGNAL USAGE)
+            # Connect the box's accepted signal to your custom method
+            self.button_box.accepted.connect(self.accept_data)
+
+            # Connect the box's rejected signal to the standard QDialog reject method
+            self.button_box.rejected.connect(self.reject)
 
 
 
@@ -57,7 +74,7 @@ class EmailSearchDialog(QDialog):
         query_label.setStyleSheet(FONT_SIZE_QSS)
         basic_search_layout.addWidget(query_label, 0, 0)
 
-        self.query_input = QLineEdit()
+        self.query_input = QLineEdit("SmartSearch")
         self.query_input.setStyleSheet(FONT_SIZE_QSS)
         # The Query input occupies Row 0
         basic_search_layout.addWidget(self.query_input, 0, 1, 1, 3)
@@ -67,7 +84,14 @@ class EmailSearchDialog(QDialog):
         directory_label.setStyleSheet(FONT_SIZE_QSS)
         basic_search_layout.addWidget(directory_label, 1, 0)  # Now in Row 1
 
-        self.directory_input = QLineEdit("INBOX")
+        self.directory_input = QComboBox()
+
+        # Add the standard mailboxes as items
+        self.directory_input.addItem("INBOX")
+        self.directory_input.addItem("SENT")  # Use the uppercase IMAP standard for clarity
+
+        # Set 'INBOX' as the default selection (it's index 0, but good practice to ensure)
+        self.directory_input.setCurrentText("INBOX")
         self.directory_input.setStyleSheet(FONT_SIZE_QSS)
         # The Directory input occupies Row 1
         basic_search_layout.addWidget(self.directory_input, 1, 1, 1, 3)
@@ -96,15 +120,22 @@ class EmailSearchDialog(QDialog):
 
         # Date Filters
         date_group = QGroupBox("Date Range")
+        date_group.setStyleSheet(FONT_SIZE_QSS)
         date_layout = QGridLayout()
 
-        date_layout.addWidget(QLabel("From Date:"), 0, 0)
-        self.date_from_input = QDateTimeEdit(QDateTime.currentDateTime().addMonths(-1))
+        fromLable=QLabel("From Date:")
+        fromLable.setStyleSheet(FONT_SIZE_QSS)
+        date_layout.addWidget(fromLable, 0, 0)
+        self.date_from_input = QDateEdit(QDate.currentDate().addMonths(-12))
+        self.date_from_input.setStyleSheet(FONT_SIZE_QSS)
         self.date_from_input.setCalendarPopup(True)
         date_layout.addWidget(self.date_from_input, 0, 1)
 
-        date_layout.addWidget(QLabel("To Date:"), 1, 0)
-        self.date_to_input = QDateTimeEdit(QDateTime.currentDateTime())
+        todatelable=QLabel("To Date:")
+        todatelable.setStyleSheet(FONT_SIZE_QSS)
+        date_layout.addWidget(todatelable, 1, 0)
+        self.date_to_input = QDateEdit(QDate.currentDate())
+        self.date_to_input.setStyleSheet(FONT_SIZE_QSS)
         self.date_to_input.setCalendarPopup(True)
         date_layout.addWidget(self.date_to_input, 1, 1)
 
@@ -113,13 +144,17 @@ class EmailSearchDialog(QDialog):
 
         # Attachment/Size Filters
         misc_group = QGroupBox("Miscellaneous Filters")
+        misc_group.setStyleSheet(FONT_SIZE_QSS)
         misc_layout = QVBoxLayout()
 
         self.has_attachment_check = QCheckBox("Must have attachment")
+        self.has_attachment_check.setStyleSheet(FONT_SIZE_QSS)
         misc_layout.addWidget(self.has_attachment_check)
 
         size_layout = QHBoxLayout()
-        size_layout.addWidget(QLabel("Min Size (KB):"))
+        minsizelable = QLabel("Min Size (KB):")
+        minsizelable.setStyleSheet(FONT_SIZE_QSS)
+        size_layout.addWidget(minsizelable)
         self.min_size_input = QSpinBox()
         self.min_size_input.setRange(0, 100000)
         size_layout.addWidget(self.min_size_input)
@@ -135,16 +170,26 @@ class EmailSearchDialog(QDialog):
         # Convert QDateTime to Unix timestamps (seconds since epoch)
         date_from_ts = self.date_from_input.dateTime().toSecsSinceEpoch()
         date_to_ts = self.date_to_input.dateTime().toSecsSinceEpoch()
+        directory=directory = self.directory_input.currentText()
+        query = self.query_input.text()
+
+        if self.has_attachment_check.isChecked():
+            gmail_raw_query=f'has:attachment "{query}"'
+        else:
+            gmail_raw_query=f'{query}'
+
+
 
         return {
-            "query": self.query_input.text(),
-            "directory": self.directory_input.text(),
+            "query": query,
+            "directory": directory,
             "from_address": self.from_input.text(),
             "to_address": self.to_input.text(),
             "has_attachment": self.has_attachment_check.isChecked(),
             "date_from_ts": date_from_ts,
             "date_to_ts": date_to_ts,
-            "min_size_kb": self.min_size_input.value()
+            "min_size_kb": self.min_size_input.value(),
+            "gmail_raw_query": gmail_raw_query,
         }
 
     def accept_data(self):
