@@ -3,7 +3,7 @@ from google.genai import types
 from config_reader import LOCAL_MODE, CLIENT_PREFIX_TO_STRIP
 from utils import (CHECKBOX_STYLE_QSS_black, CHECKBOX_STYLE_QSS_gray, CHECKBOX_STYLE_QSS_blue, CHECKBOX_STYLE_QSS_red,
                    Container_STYLE_QSS, Radio_STYLE_QSS_green, Radio_STYLE_QSS_red, QRadioButton_STYLE_QSS_green_1515bg,QRadioButton_STYLE_QSS_green_1616bg,
-                   QRadioButton_STYLE_QSS_green_1520bg, Container_STYLE_QSSgray)
+                   QRadioButton_STYLE_QSS_green_1520bg, Container_STYLE_QSSgray, saveclear_STYLE_QSS)
 Vertic_Flag = True
 isLTR = False # left to right or RTL
 chat_mode = True
@@ -116,39 +116,7 @@ def setup_ui(self):
     tik.setFont(font)
 
     search_layout = QtWidgets.QHBoxLayout()
-    self.save_btn = QtWidgets.QPushButton(save_btn_str)
-    self.save_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: black;
-                    color: white;
-                    border: 6px solid #ff0000;
-                    border-radius: 4px;
-                    padding: 6px 12px;
-                }
-                QPushButton:hover {
-                    background-color: #0069d9;
-                    border-color: #ff0000;
-                }
-            """)
-    self.save_btn.setFont(font)
-    self.save_btn.clicked.connect(self.save_all2file)
 
-    self.clear_btn = QtWidgets.QPushButton(clear_btn_str)
-    self.clear_btn.setStyleSheet("""
-            QPushButton {
-                background-color: black;
-                color: white;
-                border: 6px solid #ff0000;
-                border-radius: 4px;
-                padding: 6px 12px;
-            }
-            QPushButton:hover {
-                background-color: #0069d9;
-                border-color: #ff0000;
-            }
-        """)
-    self.clear_btn.setFont(font)
-    self.clear_btn.clicked.connect(self.clear_all)
 
     if LOCAL_MODE == "True":
         self.display_root = QtWidgets.QLabel(CLIENT_PREFIX_TO_STRIP)
@@ -165,11 +133,10 @@ def setup_ui(self):
         dir_layout.addWidget(self.dir_edit)
         dir_layout.addWidget(self.display_root)
         dir_layout.addSpacing(200)
-        dir_layout.addWidget(self.clear_btn)
-        dir_layout.addWidget(self.save_btn)
+
+
     else:
-        dir_layout.addWidget(self.save_btn)
-        dir_layout.addWidget(self.clear_btn)
+
         dir_layout.addSpacing(200)
         dir_layout.addWidget(self.display_root)
         dir_layout.addWidget(self.dir_edit)
@@ -235,7 +202,7 @@ def setup_ui(self):
     self.cloud_gemini_radio.toggled.connect(self.handle_radio_check)
 
     if isLTR:
-        search_layout.addWidget(self.save_btn)
+        search_layout.addWidget(self.search_btn)
         search_layout.addWidget(self.label)
         search_layout.addWidget(self.search_input)
         search_layout.addSpacing(100)
@@ -410,7 +377,23 @@ def setup_ui(self):
     g1_layout.addSpacing(small_gap)
     g1_layout.addWidget(self.exact_search_radio)
 
+    self.save_btn = QtWidgets.QPushButton(save_btn_str)
+    self.save_btn.setStyleSheet(saveclear_STYLE_QSS)
+    self.save_btn.setFont(font)
+    self.save_btn.clicked.connect(self.save_all2file)
 
+    self.clear_btn = QtWidgets.QPushButton(clear_btn_str)
+    self.clear_btn.setStyleSheet(saveclear_STYLE_QSS)
+    self.clear_btn.setFont(font)
+    self.clear_btn.clicked.connect(self.clear_all)
+
+    g4_container = QtWidgets.QWidget()
+    g4_container.setStyleSheet(Container_STYLE_QSS)
+    g4_layout = QtWidgets.QHBoxLayout(g4_container)
+    g4_layout.setAlignment(QtCore.Qt.AlignBottom)
+    g4_layout.addWidget(self.clear_btn)
+    g4_layout.addSpacing(small_gap)
+    g4_layout.addWidget(self.save_btn)
 
     self.g_group_widget = QtWidgets.QWidget()
     self.g_group_widget.setStyleSheet("""
@@ -458,26 +441,18 @@ def setup_ui(self):
     #layout.addLayout(g2_layout)
     # Create a parent horizontal layout to contain both groups side by side
 
-    if isLTR:
-        both_groups_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
-        self.g1_layout_index = both_groups_layout.count()  # Get the index for the middle widget
-        both_groups_layout.addWidget(self.e_group_widget)
+    both_groups_layout.addWidget(g4_container)
+    both_groups_layout.addStretch()
+    both_groups_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+    self.g1_layout_index = both_groups_layout.count()  # Get the index for the middle widget
+    both_groups_layout.addWidget(self.g_group_widget)
 
-        #both_groups_layout.addWidget(g11_container)
-        both_groups_layout.addSpacing(gap12)
-        both_groups_layout.addWidget(self.g_group_widget)
-        both_groups_layout.addSpacing(20)
-        both_groups_layout.addWidget(g2_container)
-    else:
-        both_groups_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
-        self.g1_layout_index = both_groups_layout.count()  # Get the index for the middle widget
-        both_groups_layout.addWidget(self.g_group_widget)
 
-        # both_groups_layout.addWidget(g11_container)
-        both_groups_layout.addSpacing(gap12)
-        both_groups_layout.addWidget(self.e_group_widget)
-        both_groups_layout.addSpacing(20)
-        both_groups_layout.addWidget(g2_container)
+    both_groups_layout.addSpacing(gap12)
+    both_groups_layout.addWidget(self.e_group_widget)
+    both_groups_layout.addSpacing(20)
+    both_groups_layout.addWidget(g2_container)
+
 
     g1_container.setToolTip("איך לחפש, 1 האם כל המילה מופיעה 2 האם רק חלקה ")
     g2_container.setToolTip("ניקוי מסך התוצאות ומסך הבקשות")
@@ -507,6 +482,9 @@ def setup_ui(self):
     self.both_groups_layout = both_groups_layout
 
 
+
+    
+    
 
 
 
@@ -550,5 +528,3 @@ def setup_ui(self):
 
     layout.addWidget(self.results_area)
 
-
-    # (End of setup_ui method)

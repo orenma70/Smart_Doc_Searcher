@@ -122,6 +122,22 @@ Container_STYLE_QSS="""
                      padding: 5px;
                  }
              """
+
+
+saveclear_STYLE_QSS="""
+                QPushButton {
+                    background-color: black;
+                    color: white;
+                    border: 6px solid #ff0000;
+                    border-radius: 4px;
+                    padding: 6px 12px;
+                }
+                QPushButton:hover {
+                    background-color: #0069d9;
+                    border-color: #ff0000;
+                }
+            """
+
 Container_STYLE_QSSgray="""
                  QWidget {
                      background-color: #F0F0F0; /* Alice Blue background */

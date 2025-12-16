@@ -53,7 +53,9 @@ class EmailSearchWorker(QObject):
             # 1. Connect and Login
 
             mail = imaplib.IMAP4_SSL(self.server, self.port)
+            mail._encoding = 'utf-8'
             mail.login(self.user, self.password)
+
 
             # 2. Select Mailbox (Folder)
             # The folder name is often case-sensitive (e.g., 'INBOX', not 'inbox')
@@ -72,37 +74,32 @@ class EmailSearchWorker(QObject):
                 raise ValueError(f"Could not select mailbox '{self.folder}'. Check folder name.")
 
             # 3. Search the Mailbox
-            # Search criteria: Find emails where the query is in the BODY (content).
-            # Using BODY is generally safer and returns relevant results.
-                # The search value is the string inside the quotes:
 
 
-            imap_search_prefix = 'BODY'
+            encoded_query_bytes = self.query.encode('utf-8')
 
-            # 2. Add the query, enclosed in double quotes as required by IMAP.
-            #    The IMAP command structure will be 'SEARCH CHARSET UTF-8 BODY "Don’t get rusty"'
-            #    We use 'BODY' as the search key.
+            # The standard IMAP command arguments for a BODY search:
+            # Note: All these strings are ASCII, so they won't cause the crash.
+            search_args = [
+                'CHARSET',
+                'UTF-8',
+                'BODY',
+                encoded_query_bytes  # <-- This is the bytes literal we prepared
+            ]
 
-            # We must manually escape backslashes and double quotes in the query
-            # for IMAP literal safety, though for the curly apostrophe it's often fine.
+            # --- 3b. Add Attachment/Size Criteria (Optional) ---
+            params = self.gmail_raw_query
+            has_attach = str(params.get("has_attachment", False))
 
-            # Full search criteria string, ready to be encoded:
-            search_criteria = f'{imap_search_prefix} "{self.query}"'
-            quoted_query = f'"{self.query}"'
-            quoted_query.encode("utf-8")
-            search_criteria = f'CHARSET utf-8 {imap_search_prefix} {quoted_query}'
-            #search_criteria = f'{imap_search_prefix} "{self.query}"'
-            encoded_criteria = search_criteria.encode('utf-8')
+            if has_attach == "True":
+                min_size_kb = str(1024 * (params.get("min_size_kb", 0) + 122))
+                search_args.append('LARGER')
+                search_args.append(min_size_kb)  # min_size_kb is also an ASCII safe string
 
-            # 3. Execute the search command. The first argument is the CHARSET,
-            #    and the second is the fully constructed command string (as bytes).
-            #    This method forces imaplib to handle the complex encoding correctly.
-            search_criteria_args = (
-                'CHARSET',  # Argument 1: The key for encoding
-                'UTF-8',  # Argument 2: The encoding value
-                imap_search_prefix,  # Argument 3: The IMAP search key (e.g., 'BODY')
-                self.query.encode('utf-8')  # Argument 4: The query value (as a byte literal)
-            )
+            # --- 3c. Execute the Search ---
+            # mail.search accepts the arguments as an unpacked list (*search_args)
+            print(f"Executing IMAP search with args: {search_args}")  # DEBUG: See the command being built
+            #status, data = mail.search(None, *search_args)
 
             params = self.gmail_raw_query
             min_size_kb=str(1024*(params["min_size_kb"]+122)) # add 122k for minimal text
@@ -110,7 +107,7 @@ class EmailSearchWorker(QObject):
             if has_attach == "True":
                 status, data = mail.search("UTF-8", 'BODY', f'"{self.query}"','LARGER',min_size_kb)
             else:
-                status, data = mail.search(None, 'CHARSET', 'UTF-8', 'BODY', f'"{self.query}"')
+                status, data = mail.search(None, *search_args)
 
             #status, data = mail.search("UTF-8",  gmail_raw_query) # 'X-GM-RAW',
 
