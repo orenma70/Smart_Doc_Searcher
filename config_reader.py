@@ -29,7 +29,13 @@ def read_setup(key_name, config_file="setup.txt"):
     # If the loop finishes without finding the key
     return None
 
-email_str=read_setup("email")
+
+email_used=read_setup("email_used")
+if email_used=="gmail":
+    email_str=read_setup("gmail_address")
+elif email_used=="walla":
+    email_str = read_setup("walla_address")
+
 BUCKET_NAME=read_setup("BUCKET_NAME")
 GCS_OCR_OUTPUT_PATH = "gs://" + BUCKET_NAME + "/vision_ocr_output/"
 

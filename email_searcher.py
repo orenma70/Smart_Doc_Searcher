@@ -1,9 +1,12 @@
 from PyQt5.QtCore import QObject, pyqtSignal
-import imaplib, ssl
+import imaplib, ssl, sys, re
 import email
 import email.header
 import socket  # Added for connection timeout handling
-
+from PyQt5.QtWidgets import QApplication
+from PyQt5 import QtCore
+import configparser
+import smtplib
 
 
 EMAIL_PROVIDERS = {
@@ -48,8 +51,8 @@ class EmailSearchWorker(QObject):
             socket.setdefaulttimeout(10)
 
             # 1. Connect and Login
-            mail = imaplib.IMAP4_SSL(self.server, self.port)
 
+            mail = imaplib.IMAP4_SSL(self.server, self.port)
             mail.login(self.user, self.password)
 
             # 2. Select Mailbox (Folder)
@@ -100,21 +103,14 @@ class EmailSearchWorker(QObject):
                 imap_search_prefix,  # Argument 3: The IMAP search key (e.g., 'BODY')
                 self.query.encode('utf-8')  # Argument 4: The query value (as a byte literal)
             )
-            # Encode the command *after* adding the quotes
 
-
-             # The search call uses 'UTF-8' as the charset argument, and the encoded criteria
-            #status, data = mail.search('UTF-8', encoded_criteria)
-            #status, data = mail.search(*search_criteria_args)
             params = self.gmail_raw_query
             min_size_kb=str(1024*(params["min_size_kb"]+122)) # add 122k for minimal text
             has_attach = str(params["has_attachment"])
-            #status, data = mail.search("UTF-8", 'X-GM-RAW', gmail_raw_query)  # ,
-
             if has_attach == "True":
                 status, data = mail.search("UTF-8", 'BODY', f'"{self.query}"','LARGER',min_size_kb)
             else:
-                status, data = mail.search("UTF-8", 'BODY', f'"{self.query}"')
+                status, data = mail.search(None, 'CHARSET', 'UTF-8', 'BODY', f'"{self.query}"')
 
             #status, data = mail.search("UTF-8",  gmail_raw_query) # 'X-GM-RAW',
 
@@ -180,3 +176,95 @@ class EmailSearchWorker(QObject):
 
             # 7. Emit Results (Always happens, even on error)
             self.search_finished.emit(results)
+
+
+# =========================================================================
+# === STANDALONE TESTING CODE ===
+# =========================================================================
+
+class TestRunner(QObject):
+    def __init__(self, app_instance):
+        super().__init__()
+        self.app = app_instance
+        self.worker = None
+        self.thread = None
+
+    def handle_results(self, results):
+        """Prints the results received from the worker and quits the application."""
+        print("\n--- Search Results Received ---")
+        for item in results:
+            print(item)
+        print("-----------------------------\n")
+
+        # Stop the thread and quit the application gracefully
+        if self.thread:
+            self.thread.quit()
+        self.app.quit()
+
+    def start_test(self):
+        """Sets up and starts the worker thread with dummy/test data."""
+        from config_reader import email_str
+
+        print("Starting Email Search Worker Test...")
+        params = launch_search_dialog()
+
+
+        TEST_QUERY = params["query"]
+        TEST_FOLDER = params["directory"]
+        gmail_raw_query = params
+
+        # --- ASSUME THESE ARE READ FROM NEW GUI INPUTS OR A CONFIG FILE ---
+        TEST_EMAIL = email_str  # self.email_user_input.text()  # e.g., user@walla.co.il
+
+        # Use re.findall() to extract all matches (the text within the capturing group)
+        provider_key = re.findall(r'@(.*?)\.', email_str)
+        TEST_PROVIDER_KEY = provider_key[0]
+        # --- DEFINE TEST PARAMETERS HERE ---
+
+        provider_info = EMAIL_PROVIDERS[TEST_PROVIDER_KEY]
+        if TEST_PROVIDER_KEY == "gmail":
+            TEST_PASSWORD = "netj diso xxfv syqi"
+        else:
+            TEST_PASSWORD = "Jmjmjm2004"
+
+        # Mock parameters for the gmail_raw_query argument
+        TEST_GMAIL_PARAMS = params
+
+        # --- Worker Setup ---
+        self.worker = EmailSearchWorker(
+            query=TEST_QUERY,
+            folder=TEST_FOLDER,
+            email_user=TEST_EMAIL,
+            email_password=TEST_PASSWORD,
+            imap_server=provider_info["server"],
+            imap_port=provider_info["port"],
+            gmail_raw_query=TEST_GMAIL_PARAMS,
+            provider_key=TEST_PROVIDER_KEY
+        )
+
+        # --- Thread Setup ---
+        self.thread = QtCore.QThread()
+        self.worker.moveToThread(self.thread)
+
+        # Connections
+        self.thread.started.connect(self.worker.run)
+        self.worker.search_finished.connect(self.handle_results)
+
+        # Start the thread
+        self.thread.start()
+
+
+if __name__ == '__main__':
+    from email_option_gui import launch_search_dialog
+
+    # 1. Create QApplication instance
+    app = QApplication(sys.argv)
+
+    # 2. Create the TestRunner
+    runner = TestRunner(app)
+
+    # 3. Start the test execution
+    runner.start_test()
+
+    # 4. Start the PyQt event loop (required for QThread/Signals to work)
+    sys.exit(app.exec_())

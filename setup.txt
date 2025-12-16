@@ -4,9 +4,21 @@
 BUCKET_NAME=oren-smart-search-docs-1205
 CLIENT_PREFIX_TO_STRIP=C:/a/מצרפי
 LOCAL_MODE=False
-emailsec=Jmjmjm2004
-email=orenma@gmail.com  #  orenma70@walla.co.il
 
+email_used=gmail
+
+
+
+
+
+
+
+
+
+#++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+emailsec=Jmjmjm2004
+walla_address=orenma70@walla.co.il
+gmail_address=orenma@gmail.com
 # כתובות ה-API של Cloud Run 
 API_main=https://smart-doc-searcher-api-v15-359127107055.us-central1.run.app/
 
