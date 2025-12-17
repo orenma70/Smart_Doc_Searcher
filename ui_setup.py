@@ -1,11 +1,11 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
 from google.genai import types
-from config_reader import LOCAL_MODE, CLIENT_PREFIX_TO_STRIP
+from config_reader import LOCAL_MODE, CLIENT_PREFIX_TO_STRIP, Language
 from utils import (CHECKBOX_STYLE_QSS_black, CHECKBOX_STYLE_QSS_gray, CHECKBOX_STYLE_QSS_blue, CHECKBOX_STYLE_QSS_red,
                    Container_STYLE_QSS, Radio_STYLE_QSS_green, Radio_STYLE_QSS_red, QRadioButton_STYLE_QSS_green_1515bg,QRadioButton_STYLE_QSS_green_1616bg,
                    QRadioButton_STYLE_QSS_green_1520bg, Container_STYLE_QSSgray, saveclear_STYLE_QSS)
 Vertic_Flag = True
-isLTR = False # left to right or RTL
+isLTR = Language == "English" # left to right or RTL
 chat_mode = True
 
 
@@ -18,23 +18,23 @@ if isLTR:
 
 
     btn_browse_str = "Choose Search Folder"
-    tik_str = "Folder 📂 --->"
+    tik_str = " 📂 --->"
     dir_edit_alignment_choice = QtCore.Qt.AlignmentFlag.AlignLeft
     dir_edit_LayoutDirection = QtCore.Qt.LayoutDirection.LeftToRight
-    search_btn_str = " Start Search !!"
-    label_str = " Enter Search Words -->"
-    label_gpt_str = " Ask your question -->"
+    search_btn_str = "! Start Search !"
+    label_str = " Enter Search Words ✏️-->"
+    label_gpt_str = " Ask your question ✏️-->"
     #search_input_words_str = "Enter here search words"
     setText_str = "default message here"
-    clear_btn_str = "Clear ?"
+    clear_btn_str = "Clear 🗑️"
 
     nongemini_radio_str = " Keyword Matching"  # Semantic Search "
     gemini_radio_str = " Ask Chat "
     email_push_str = "✉️  Search Email  "
-    exact_search_radio_str = " Match full word "
-    partial_search_radio_str = " Match partially "
+    exact_search_radio_str = " Match Full Word "
+    partial_search_radio_str = " Match Partially "
     all_word_search_radio_str = " All Words "
-    any_word_search_radio_str = " One word "
+    any_word_search_radio_str = " One Word Search"
 
     save_btn_str = "Save 💾"
 

@@ -4,7 +4,7 @@
 BUCKET_NAME=oren-smart-search-docs-1205
 CLIENT_PREFIX_TO_STRIP=C:/a/מצרפי
 LOCAL_MODE=False
-
+Language=English  # Hebrew
 email_used=gmail
 
 

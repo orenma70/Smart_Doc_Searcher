@@ -33,6 +33,7 @@ from config_reader import API_main, BUCKET_NAME, CLIENT_PREFIX_TO_STRIP, email_s
 from gcs_path_browser import GCSBrowserDialog, check_sync
 from email_option_gui import launch_search_dialog
 from email_searcher import EmailSearchWorker, EMAIL_PROVIDERS
+from gmail_searcher import GmailAPISearcher
 from ui_setup import non_sync_cloud_str, sync_cloud_str
 import pytesseract
 from utils import CHECKBOX_STYLE_QSS_black, CHECKBOX_STYLE_QSS_gray, Container_STYLE_QSSgray, Container_STYLE_QSS
@@ -1439,7 +1440,7 @@ class SearchApp(QtWidgets.QWidget):
 
         query = params["query"]
         folder = params["directory"]
-        gmail_raw_query = params
+        gmail_raw_query = params["gmail_raw_query"]
 
 
         # --- ASSUME THESE ARE READ FROM NEW GUI INPUTS OR A CONFIG FILE ---
@@ -1465,16 +1466,22 @@ class SearchApp(QtWidgets.QWidget):
             return
 
         # --- Instantiation with all parameters ---
-        self.email_worker = EmailSearchWorker(
-            query,
-            folder,
-            email_user,
-            email_password,
-            server,
-            port,
-            gmail_raw_query,
-            provider_key
-        )
+
+
+
+        if provider_key == "gmail":
+            self.email_worker = GmailAPISearcher()
+        else:
+            self.email_worker = EmailSearchWorker(
+                query,
+                folder,
+                email_user,
+                email_password,
+                server,
+                port,
+                params,
+                provider_key
+            )
 
         self.thread = QtCore.QThread()
 
@@ -1483,7 +1490,11 @@ class SearchApp(QtWidgets.QWidget):
 
         # 3. Connect signals:
         #    a) When the thread starts, execute the worker's run() method.
-        self.thread.started.connect(self.email_worker.run)
+
+        if provider_key == "gmail":
+            self.thread.started.connect(lambda: self.email_worker.search_emails_api(gmail_raw_query))
+        else:
+            self.thread.started.connect(self.email_worker.search_emails_api)
 
         #    b) When the worker finishes (emits the signal), process results and clean up.
         self.email_worker.search_finished.connect(self.display_email_results)

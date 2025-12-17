@@ -41,7 +41,7 @@ class EmailSearchWorker(QObject):
         self.gmail_raw_query = gmail_raw_query
         self.provider_key = provider_key
 
-    def run(self):
+    def search_emails_api(self):
         results = []
         results.append(self.provider_key)
         mail = None  # Initialize mail to None for finally block check
@@ -244,7 +244,7 @@ class TestRunner(QObject):
         self.worker.moveToThread(self.thread)
 
         # Connections
-        self.thread.started.connect(self.worker.run)
+        self.thread.started.connect(self.worker.search_emails_api)
         self.worker.search_finished.connect(self.handle_results)
 
         # Start the thread

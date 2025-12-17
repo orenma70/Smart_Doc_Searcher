@@ -2,6 +2,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 import os
+from PyQt5.QtCore import QObject, pyqtSignal
 
 # --- Configuration ---
 # Define the scopes (permissions) needed. Read-only is usually sufficient for searching.
@@ -9,9 +10,11 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 USER_ID = 'me'  # Represents the authenticated user
 
 
-class GmailAPISearcher:
+class GmailAPISearcher(QObject):
+    search_finished = pyqtSignal(list)
 
-    def __init__(self, credentials_path='credentials.json'):
+    def __init__(self, credentials_path='credentials.json', parent=None):
+        super().__init__(parent)
         self.credentials_path = credentials_path
         self.service = self._get_gmail_service()
 
@@ -40,12 +43,13 @@ class GmailAPISearcher:
 
         return build('gmail', 'v1', credentials=creds)
 
-    def search_emails_api(self, query_string):
+    def search_emails_api(self,query_string):
         """
         Searches Gmail using a standard Gmail query string (q parameter).
 
         Example query_string: 'in:inbox חנוכה larger:500k'
         """
+
         results = []
         try:
             # 1. Search for Message IDs matching the query
@@ -83,7 +87,9 @@ class GmailAPISearcher:
         except Exception as e:
             results.append(f"--- ERROR: Gmail API Search Error: {e} ---")
 
-        return results
+        finally:
+            self.search_finished.emit(results)
+
 
 
 # --- Example Usage (Assuming credentials.json is set up) ---
@@ -93,6 +99,7 @@ if __name__ == '__main__':
 
     # You would pass your full constructed query here, e.g., 'חנוכה larger:10k'
     api_searcher = GmailAPISearcher()
+
     api_results = api_searcher.search_emails_api(HEBREW_QUERY)
 
     print("\n--- Gmail API Search Results ---")
