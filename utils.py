@@ -1,3 +1,13 @@
+import datetime
+
+def get_outlook_date(timestamp):
+    # Outlook needs YYYY-MM-DD for KQL $search
+    return datetime.datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d')
+
+def get_gmail_date(timestamp):
+    # Gmail needs YYYY/MM/DD for 'after:' and 'before:'
+    return datetime.datetime.fromtimestamp(timestamp).strftime('%Y/%m/%d')
+
 CHECKBOX_STYLE_QSS_black ="""
                     QCheckBox {
                         background-color: black ; /* #f0f0f0 Light gray background for the frame */

@@ -33,6 +33,8 @@ from config_reader import API_main, BUCKET_NAME, CLIENT_PREFIX_TO_STRIP, email_s
 from gcs_path_browser import GCSBrowserDialog, check_sync
 from email_option_gui import launch_search_dialog
 from email_searcher import EmailSearchWorker, EMAIL_PROVIDERS
+from outlook_searcher import OutlookAPISearcher
+from utils import get_outlook_date
 from gmail_searcher import GmailAPISearcher
 from ui_setup import non_sync_cloud_str, sync_cloud_str
 import pytesseract
@@ -1425,6 +1427,26 @@ class SearchApp(QtWidgets.QWidget):
                 # Use 'continue' to skip the rest of this 'result' block and move to the next one.
                 continue  # Skip to the next email block
 
+    def display_gmail_results(self, results):
+        # This method runs in the main GUI thread and receives 'results' list
+        BLUE_STYLE = 'style="color: blue; font-weight: bold;"'
+        self.g31_container.setStyleSheet(Container_STYLE_QSSgray)
+
+        if not results:
+            return
+
+
+        search_params = self.email_search_params
+
+        query = search_params["query"]
+        directory = search_params["directory"]
+
+        self.results_area.append(f"\n--- Email Search Results --- <span {BLUE_STYLE}>{query}</span> in <span {BLUE_STYLE}>{directory}</span>")
+        for result in results:
+            self.results_area.append(result)
+
+
+
 
 
     def email_search(self):
@@ -1441,6 +1463,14 @@ class SearchApp(QtWidgets.QWidget):
         query = params["query"]
         folder = params["directory"]
         gmail_raw_query = params["gmail_raw_query"]
+
+        fromto_address = params["fromto_address"]
+        has_attachment = params["has_attachment"]
+        date_from_ts = params["date_from_ts"]
+        date_to_ts = params["date_to_ts"]
+        min_size_kb = params["min_size_kb"]
+
+
 
 
         # --- ASSUME THESE ARE READ FROM NEW GUI INPUTS OR A CONFIG FILE ---
@@ -1471,6 +1501,8 @@ class SearchApp(QtWidgets.QWidget):
 
         if provider_key == "gmail":
             self.email_worker = GmailAPISearcher()
+        elif provider_key == "outlook":
+            self.email_worker = OutlookAPISearcher()
         else:
             self.email_worker = EmailSearchWorker(
                 query,
@@ -1493,11 +1525,15 @@ class SearchApp(QtWidgets.QWidget):
 
         if provider_key == "gmail":
             self.thread.started.connect(lambda: self.email_worker.search_emails_api(gmail_raw_query))
+            self.email_worker.search_finished.connect(self.display_gmail_results)
+        elif provider_key == "outlook":
+            self.thread.started.connect(lambda: self.email_worker.search_emails_api(query,fromto_address,has_attachment,min_size_kb,date_to_ts,date_from_ts))
+            self.email_worker.search_finished.connect(self.display_gmail_results)
         else:
             self.thread.started.connect(self.email_worker.search_emails_api)
-
+            self.email_worker.search_finished.connect(self.display_email_results)
         #    b) When the worker finishes (emits the signal), process results and clean up.
-        self.email_worker.search_finished.connect(self.display_email_results)
+
         self.email_worker.search_finished.connect(self.thread.quit)  # Stops the thread loop
 
         #    c) Optional cleanup: delete worker and thread objects when thread finishes
