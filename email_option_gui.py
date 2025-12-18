@@ -337,8 +337,8 @@ class EmailSearchDialog(QDialog):
         from config_reader import read_setup
 
         date_from_ts = self.date_from_input.dateTime().toSecsSinceEpoch()
-        date_to_ts = self.date_to_input.dateTime().toSecsSinceEpoch()
-        directory=directory = self.directory_input.currentText()
+        date_to_ts = self.date_to_input.dateTime().toSecsSinceEpoch() + 86400 # end of day
+        directory = self.directory_input.currentText()
         query = self.query_input.text()
 
         attachment_str = f"has:attachment larger:{self.min_size_input.value()}" if self.has_attachment_check.isChecked() else ""
