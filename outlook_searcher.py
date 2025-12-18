@@ -88,8 +88,6 @@ class OutlookAPISearcher(QObject):
                 '$top': 25
             }
 
-            print(f"DEBUG: Outlook KQL Query: {final_query}")
-
             response = requests.get(endpoint, headers=headers, params=params)
             response.raise_for_status()
             messages = response.json().get('value', [])
@@ -100,6 +98,7 @@ class OutlookAPISearcher(QObject):
             for msg in messages:
                 subject = msg.get('subject') or "No Subject"
                 from_info = msg.get('from', {}).get('emailAddress', {})
+                to_info = msg.get('sender', {}).get('emailAddress', {})
                 sender_display = f"{from_info.get('name')} <{from_info.get('address')}>"
                 date = msg.get('receivedDateTime', '')
                 attach = " [📎]" if msg.get('hasAttachments') else ""
@@ -142,7 +141,7 @@ class OutlookAPISearcher(QObject):
 if __name__ == '__main__':
     searcher = OutlookAPISearcher()
 
-    # Note: Query syntax here should be Outlook KQL (e.g. 'from:boss')
+
     results = searcher.search_emails_api('Smart')
     for item in results:
         print(item)

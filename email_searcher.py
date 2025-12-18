@@ -10,16 +10,20 @@ import smtplib
 
 
 EMAIL_PROVIDERS = {
-    "gmail": {
+    "Gmail": {
         "server": "imap.gmail.com",
         "port": 993
     },
-    "outlook": {
+    "Outlook": {
         "server": "outlook.office365.com",
         "port": 993
     },
-    "walla": {
+    "Walla": {
         "server": "imap.walla.co.il",
+        "port": 993
+    },
+    "iCloud": {
+        "server": "imap.mail.me.com",
         "port": 993
     },
     # Add other providers here...
@@ -43,7 +47,6 @@ class EmailSearchWorker(QObject):
 
     def search_emails_api(self):
         results = []
-        results.append(self.provider_key)
         mail = None  # Initialize mail to None for finally block check
 
         try:
@@ -62,9 +65,17 @@ class EmailSearchWorker(QObject):
 
             mail_dir =self.folder
 
-            if self.provider_key == "gmail" and "sent"  in mail_dir.lower():
+            mail_dir_lower = mail_dir.lower()
+
+            if self.provider_key == "Gmail" and "sent" in mail_dir_lower:
                 status, data = mail.select('"[Gmail]/Sent Mail"', readonly=True)
+
+            elif self.provider_key == "iCloud" and "sent" in mail_dir_lower:
+                # iCloud usually uses "Sent Messages"
+                status, data = mail.select('"Sent Messages"', readonly=True)
+
             else:
+                # Default for Inbox or custom folders
                 status, data = mail.select(self.folder, readonly=True)
 
 
@@ -200,7 +211,6 @@ class TestRunner(QObject):
 
     def start_test(self):
         """Sets up and starts the worker thread with dummy/test data."""
-        from config_reader import email_str
 
         print("Starting Email Search Worker Test...")
         params = launch_search_dialog()
@@ -211,16 +221,18 @@ class TestRunner(QObject):
         gmail_raw_query = params
 
         # --- ASSUME THESE ARE READ FROM NEW GUI INPUTS OR A CONFIG FILE ---
-        TEST_EMAIL = email_str  # self.email_user_input.text()  # e.g., user@walla.co.il
+        TEST_EMAIL = params["email"]  # self.email_user_input.text()  # e.g., user@walla.co.il
 
         # Use re.findall() to extract all matches (the text within the capturing group)
-        provider_key = re.findall(r'@(.*?)\.', email_str)
-        TEST_PROVIDER_KEY = provider_key[0]
+        provider_key = params["provider_key"]
+        TEST_PROVIDER_KEY = provider_key
         # --- DEFINE TEST PARAMETERS HERE ---
 
         provider_info = EMAIL_PROVIDERS[TEST_PROVIDER_KEY]
-        if TEST_PROVIDER_KEY == "gmail":
+        if TEST_PROVIDER_KEY == "Gmail":
             TEST_PASSWORD = "netj diso xxfv syqi"
+        elif TEST_PROVIDER_KEY == "iCloud":
+            TEST_PASSWORD = "Lael0404"
         else:
             TEST_PASSWORD = "Jmjmjm2004"
 

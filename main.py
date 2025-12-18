@@ -29,13 +29,15 @@ import tempfile
 #import search_core
 from search_core import simple_keyword_search
 from document_parsers import extract_text_and_images_from_pdf
-from config_reader import API_main, BUCKET_NAME, CLIENT_PREFIX_TO_STRIP, email_str
+from config_reader import API_main, BUCKET_NAME, CLIENT_PREFIX_TO_STRIP
 from gcs_path_browser import GCSBrowserDialog, check_sync
 from email_option_gui import launch_search_dialog
 from email_searcher import EmailSearchWorker, EMAIL_PROVIDERS
 from outlook_searcher import OutlookAPISearcher
 from utils import get_outlook_date
 from gmail_searcher import GmailAPISearcher
+from icloud_searcher import ICloudAPISearcher
+
 from ui_setup import non_sync_cloud_str, sync_cloud_str
 import pytesseract
 from utils import CHECKBOX_STYLE_QSS_black, CHECKBOX_STYLE_QSS_gray, Container_STYLE_QSSgray, Container_STYLE_QSS
@@ -1441,7 +1443,7 @@ class SearchApp(QtWidgets.QWidget):
         query = search_params["query"]
         directory = search_params["directory"]
 
-        self.results_area.append(f"\n--- Email Search Results --- <span {BLUE_STYLE}>{query}</span> in <span {BLUE_STYLE}>{directory}</span>")
+        self.results_area.append(f"\n--- Email Search Results --- <span {BLUE_STYLE}>{query}</span> in <span {BLUE_STYLE}>{search_params["provider_key"]} {directory}</span>")
         for result in results:
             self.results_area.append(result)
 
@@ -1454,6 +1456,7 @@ class SearchApp(QtWidgets.QWidget):
         #QtWidgets.QApplication.processEvents()
 
         params=launch_search_dialog()
+
         self.email_search_params = params
 
         if not params:
@@ -1474,14 +1477,17 @@ class SearchApp(QtWidgets.QWidget):
 
 
         # --- ASSUME THESE ARE READ FROM NEW GUI INPUTS OR A CONFIG FILE ---
-        email_user = email_str #self.email_user_input.text()  # e.g., user@walla.co.il
+        email_user = params["email"]
 
 
         # Use re.findall() to extract all matches (the text within the capturing group)
-        provider_key = re.findall(r'@(.*?)\.', email_user)
-        provider_key=provider_key[0]
-        if provider_key == "gmail":
+
+        provider_key = params["provider_key"]
+
+        if provider_key == "Gmail":
             email_password = "netj diso xxfv syqi"
+        elif provider_key == "iCloud":
+            email_password = "gjkk-momw-arkr-uhhv" #"Lael0404"
         else:
             email_password = "Jmjmjm2004"
 
@@ -1499,10 +1505,12 @@ class SearchApp(QtWidgets.QWidget):
 
 
 
-        if provider_key == "gmail":
+        if provider_key == "Gmail":
             self.email_worker = GmailAPISearcher()
-        elif provider_key == "outlook":
+        elif provider_key == "Outlook":
             self.email_worker = OutlookAPISearcher()
+        elif provider_key == "iCloud":
+            self.email_worker = ICloudAPISearcher(email_user,email_password, server)
         else:
             self.email_worker = EmailSearchWorker(
                 query,
@@ -1523,11 +1531,15 @@ class SearchApp(QtWidgets.QWidget):
         # 3. Connect signals:
         #    a) When the thread starts, execute the worker's run() method.
 
-        if provider_key == "gmail":
+        if provider_key == "Gmail":
             self.thread.started.connect(lambda: self.email_worker.search_emails_api(gmail_raw_query))
             self.email_worker.search_finished.connect(self.display_gmail_results)
-        elif provider_key == "outlook":
+        elif provider_key == "Outlook":
             self.thread.started.connect(lambda: self.email_worker.search_emails_api(query,fromto_address,has_attachment,min_size_kb,date_to_ts,date_from_ts))
+            self.email_worker.search_finished.connect(self.display_gmail_results)
+        elif provider_key == "iCloud":
+            self.thread.started.connect(lambda: self.email_worker.search_emails_api(query, fromto_address, has_attachment, min_size_kb,
+                                                            date_to_ts, date_from_ts))
             self.email_worker.search_finished.connect(self.display_gmail_results)
         else:
             self.thread.started.connect(self.email_worker.search_emails_api)

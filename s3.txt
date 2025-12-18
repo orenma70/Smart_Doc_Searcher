@@ -1,0 +1,69 @@
+    def search_emails_api(self, query=None, sender=None, has_attachment=False, min_size=None, date_from=None,
+                          date_to=None):
+        results = []
+        try:
+            # 1. Connect to iCloud IMAP
+            mail = imaplib.IMAP4_SSL(self.server)
+            mail.login(self.username, self.password)
+            mail.select("inbox")
+
+            # 2. Build IMAP Search Criteria
+            # IMAP search is simpler than KQL/Gmail. We fetch metadata and filter in Python.
+            search_criteria = 'ALL'
+            if query:
+                search_criteria = f'TEXT "{query}"'
+
+            status, data = mail.search(None, search_criteria)
+            email_ids = data[0].split()
+
+            # Process last 50 emails (IMAP can be slow, so we limit)
+            for mail_id in reversed(email_ids):  # reversed() to see newest first
+                # Fetch headers only
+                status, msg_data = mail.fetch(mail_id, '(RFC822.HEADER)')
+                if status != 'OK': continue
+
+                msg = email.message_from_bytes(msg_data[0][1])
+                subject = str(msg.get('Subject', ''))
+                sender = str(msg.get('From', ''))
+                results.append(f"Found: {subject} from {sender}")
+
+                #date_str = msg.get("date")
+
+                # Convert Date to Unix
+                #dt = parsedate_to_datetime(date_str)
+                #unix_timestamp = int(dt.timestamp())
+
+                # --- Filtering Logic ---
+                attach_flag = True
+                sender_flag = True
+                date_flag = True
+                '''
+                # Attachment Check
+                has_attach = any(part.get_content_disposition() == 'attachment' for part in msg.walk())
+                if has_attachment and not has_attach:
+                    attach_flag = False
+
+                # Sender Check
+                if sender and sender.lower() not in sender_display.lower():
+                    sender_flag = False
+
+                # Date Check (Unix)
+                if date_from and unix_timestamp < date_from:
+                    date_flag = False
+                if date_to and unix_timestamp > date_to:
+                    date_flag = False
+
+                if sender_flag and attach_flag and date_flag:
+                    clean_date = dt.strftime('%Y-%m-%d %H:%M:%S')
+                    attach_icon = " [📎]" if has_attach else ""
+                    results.append(
+                        f"Date: {clean_date}\nFrom: {sender_display}\nSubject: {subject}{attach_icon}\n---")
+            '''
+
+            mail.logout()
+
+        except Exception as e:
+            results.append(f"--- ERROR: iCloud Search Error: {e} ---")
+        finally:
+            self.search_finished.emit(results)
+            return results

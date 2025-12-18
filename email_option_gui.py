@@ -1,6 +1,7 @@
 import sys
 from config_reader import Language
 from PyQt5.QtCore import QDate, Qt
+from config_reader import email_used
 from PyQt5.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLineEdit, QLabel, QPushButton, QDateEdit, QCheckBox,
@@ -21,6 +22,7 @@ if Language == "English":
     gst_str = "General Search Term:"
     fm_str = "Full Match"
     mf_str = "Mailbox Folder:"
+    email_str2 = "Email"
     from_str = "From:"
     dr_str = "Date Range"
     fd_str2 = "From Date:"
@@ -39,6 +41,7 @@ else:
     gst_str = "ביטוי כללי לחפוש"
     fm_str = "התאמה מלאה"
     mf_str = "ספריית מייל:"
+    email_str2 = "אימייל"
     from_str = "מאת:"
     dr_str = "טווח תאריכים"
     fd_str2 = "מתאריך:"
@@ -143,6 +146,22 @@ class EmailSearchDialog(QDialog):
         # Set 'INBOX' as the default selection (it's index 0, but good practice to ensure)
         self.directory_input.setCurrentText("INBOX")
         self.directory_input.setStyleSheet(FONT_SIZE_QSS)
+
+        email_label = QLabel(email_str2)
+        email_label.setStyleSheet(FONT_SIZE_QSS)
+
+        self.email_input = QComboBox()
+        self.email_input.currentTextChanged.connect(self.on_email_changed)
+        # Add the standard mailboxes as items
+        self.email_input.addItem("Gmail")
+        self.email_input.addItem("Outlook")
+        self.email_input.addItem("iCloud")
+        self.email_input.addItem("Walla")
+
+        # Set 'INBOX' as the default selection (it's index 0, but good practice to ensure)
+        self.email_input.setCurrentText(email_used)
+        self.email_input.setStyleSheet(FONT_SIZE_QSS)
+
         # The Directory input occupies Row 1
 
 
@@ -194,8 +213,15 @@ class EmailSearchDialog(QDialog):
         basic_search_layout.addWidget(query_label, 0, 0)
         basic_search_layout.addWidget(self.query_input, 0, 1)
         basic_search_layout.addWidget(self.full_match_radio, 0, 2)
+
+
+
         basic_search_layout.addWidget(directory_label, 1, 0)  # Now in Row 1
         basic_search_layout.addWidget(self.directory_input, 1, 1)
+        basic_search_layout.addWidget(email_label, 1, 2)  # Now in Row 1
+        basic_search_layout.addWidget(self.email_input, 1, 3)
+
+
         basic_search_layout.addWidget(self.fromto_label, 2, 0)  # Now in Row 2
         basic_search_layout.addWidget(self.fromto_input, 2, 1)  # Now in Row 2
         date_layout.addWidget(fromLable, 0, 0)
@@ -286,6 +312,10 @@ class EmailSearchDialog(QDialog):
         main_layout.addLayout(filter_layout)
         self.directory_input.currentTextChanged.connect(self.update_fromto_label)
 
+    def on_email_changed(self, new_email):
+        self.email_input.setCurrentText(new_email)
+
+
     def update_fromto_label(self, selected_directory):
 
         # We can check for 'INBOX' or 'SENT' (case-insensitive for robustness)
@@ -304,6 +334,8 @@ class EmailSearchDialog(QDialog):
     def get_search_parameters(self):
         """Gathers all input values."""
         # Convert QDateTime to Unix timestamps (seconds since epoch)
+        from config_reader import read_setup
+
         date_from_ts = self.date_from_input.dateTime().toSecsSinceEpoch()
         date_to_ts = self.date_to_input.dateTime().toSecsSinceEpoch()
         directory=directory = self.directory_input.currentText()
@@ -314,6 +346,10 @@ class EmailSearchDialog(QDialog):
 
 
         val = self.exact_date_combo.currentData()
+        provider_key = self.email_input.currentText()
+
+        email=read_setup(provider_key+"_address")
+
 
         # 2. Get the display text to check if it's "Months" or "Years"
         text = self.exact_date_combo.currentText()
@@ -345,6 +381,8 @@ class EmailSearchDialog(QDialog):
             "date_to_ts": date_to_ts,
             "min_size_kb": self.min_size_input.value(),
             "gmail_raw_query": gmail_raw_query,
+            "provider_key": provider_key,
+            "email": email,
         }
 
     def accept_data(self):
