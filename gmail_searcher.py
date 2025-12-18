@@ -62,6 +62,7 @@ class GmailAPISearcher(QObject):
             messages = response.get('messages', [])
             if not messages:
                 results.append("No emails found matching the query via Gmail API.")
+                self.search_finished.emit(results)
                 return results
 
             # 2. Fetch Headers for Display
@@ -70,17 +71,45 @@ class GmailAPISearcher(QObject):
                 msg_data = self.service.users().messages().get(
                     userId=USER_ID,
                     id=message['id'],
-                    format='metadata',
-                    metadataHeaders=['Subject', 'From', 'Date']
+                    format='full'
+                    #format='metadata',
+                    #metadataHeaders=['Subject', 'From', 'Date']
                 ).execute()
 
-                headers = {h['name']: h['value'] for h in msg_data['payload']['headers']}
+                payload = msg_data.get('payload', {})
+                headers_list = payload.get('headers', [])
+                headers = {h['name']: h['value'] for h in headers_list}
+
+                #headers = {h['name']: h['value'] for h in msg_data['payload']['headers']}
+
+                # --- Attachment Extraction Logic ---
+                filenames = []
+                parts = payload.get('parts', [])
+
+                # Gmail structures emails in "parts". We look for anything with a 'filename'
+                def find_attachments(parts_list):
+                    for part in parts_list:
+                        fname = part.get('filename')
+                        if fname:
+                            filenames.append(fname)
+                        # Check for nested parts (sometimes attachments are inside another multipart)
+                        if 'parts' in part:
+                            find_attachments(part['parts'])
+
+                find_attachments(parts)
+
+                attach_info = ""
+                if filenames:
+                    # Formats as: [📎 T6.pdf, data.csv]
+                    attach_info = f" [📎 {', '.join(filenames)}]"
 
                 # 3. Compile the result string
                 result_str = (
                     f"Date: {headers.get('Date', 'N/A')}\n"
                     f"From: {headers.get('From', 'N/A')}\n"
-                    f"Subject: {headers.get('Subject', 'N/A')}\n---"
+                    #f"Subject: {headers.get('Subject', 'N/A')}\n---"
+                    f"Subject: {headers.get('Subject', 'N/A')}{attach_info}\n---"
+
                 )
                 results.append(result_str)
 
@@ -89,7 +118,7 @@ class GmailAPISearcher(QObject):
 
         finally:
             self.search_finished.emit(results)
-
+            return results
 
 
 # --- Example Usage (Assuming credentials.json is set up) ---

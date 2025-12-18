@@ -1379,7 +1379,7 @@ class SearchApp(QtWidgets.QWidget):
         query = search_params["query"]
         directory = search_params["directory"]
         date_from_ts = search_params["date_from_ts"]
-        date_to_ts = search_params["date_to_ts"]+86400 # add 24*3600sec hours to the end of day
+        date_to_ts = search_params["date_to_ts"] # add 24*3600sec hours to the end of day
         from_address = search_params["fromto_address"].lower()
         self.results_area.append(f"\n--- Email Search Results --- <span {BLUE_STYLE}>{query}</span> in <span {BLUE_STYLE}>{directory}</span>")
         email_address = email_name = ""
@@ -1430,20 +1430,25 @@ class SearchApp(QtWidgets.QWidget):
                 continue  # Skip to the next email block
 
     def display_gmail_results(self, results):
+        search_params = self.email_search_params
+        query = search_params["query"]
+        directory = search_params["directory"]
+
+
         # This method runs in the main GUI thread and receives 'results' list
         BLUE_STYLE = 'style="color: blue; font-weight: bold;"'
         self.g31_container.setStyleSheet(Container_STYLE_QSSgray)
 
         if not results:
+            self.results_area.append(
+                f"\n--- Email Search Not Found !!! --- <span {BLUE_STYLE}>{query}</span> in <span {BLUE_STYLE}>{search_params["provider_key"]} {directory}</span>")
             return
 
-
-        search_params = self.email_search_params
-
-        query = search_params["query"]
-        directory = search_params["directory"]
-
         self.results_area.append(f"\n--- Email Search Results --- <span {BLUE_STYLE}>{query}</span> in <span {BLUE_STYLE}>{search_params["provider_key"]} {directory}</span>")
+
+
+
+
         for result in results:
             self.results_area.append(result)
 
@@ -1538,8 +1543,7 @@ class SearchApp(QtWidgets.QWidget):
             self.thread.started.connect(lambda: self.email_worker.search_emails_api(query,fromto_address,has_attachment,min_size_kb,date_to_ts,date_from_ts))
             self.email_worker.search_finished.connect(self.display_gmail_results)
         elif provider_key == "iCloud":
-            self.thread.started.connect(lambda: self.email_worker.search_emails_api(query, fromto_address, has_attachment, min_size_kb,
-                                                            date_to_ts, date_from_ts))
+            self.thread.started.connect(lambda: self.email_worker.search_emails_api(query, fromto_address, has_attachment, min_size_kb,date_to_ts, date_from_ts))
             self.email_worker.search_finished.connect(self.display_gmail_results)
         else:
             self.thread.started.connect(self.email_worker.search_emails_api)

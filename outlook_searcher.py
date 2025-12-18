@@ -65,26 +65,20 @@ class OutlookAPISearcher(QObject):
 
         return result.get("access_token")
 
-    def search_emails_api(self, query=None, sender=None, has_attachment=False, min_size=None, date_from=None,
-                          date_to=None):
+    def search_emails_api(self, query=None, sender=None, has_attachment=False, min_size=None, date_to=None ,date_from=None):
         results = []
         try:
             token = self._get_access_token()
             headers = {
                 'Authorization': f'Bearer {token}',
-                'ConsistencyLevel': 'eventual'  # <--- THIS IS CRITICAL
+                'ConsistencyLevel': 'eventual'
             }
-
-
-
-            final_query = query
 
             # --- API Request ---
             endpoint = "https://graph.microsoft.com/v1.0/me/messages"
             params = {
-                # Remove the { } and use quotes around the string variable
-                '$search': f'{final_query}',
-                '$select': 'subject,from,receivedDateTime,hasAttachments',
+                '$search': f'"{query}"' if query else None,
+                '$select': 'id,subject,from,receivedDateTime,hasAttachments',  # Need 'id' to fetch attachments
                 '$top': 25
             }
 
@@ -93,42 +87,51 @@ class OutlookAPISearcher(QObject):
             messages = response.json().get('value', [])
 
             if not messages:
-                return [f"No results found for: {final_query}"]
+                return [f"No results found for: {query}"]
 
             for msg in messages:
+                msg_id = msg.get('id')
                 subject = msg.get('subject') or "No Subject"
-                from_info = msg.get('from', {}).get('emailAddress', {})
-                to_info = msg.get('sender', {}).get('emailAddress', {})
-                sender_display = f"{from_info.get('name')} <{from_info.get('address')}>"
-                date = msg.get('receivedDateTime', '')
-                attach = " [📎]" if msg.get('hasAttachments') else ""
+                from_dict = msg.get('from', {}).get('emailAddress', {})
+                sender_display = f"{from_dict.get('name')} <{from_dict.get('address')}>"
+                date_str = msg.get('receivedDateTime', '').replace('Z', '+00:00')
 
-                attach_flag = True
-                sender_flag = True
-                date_flag = True
+                # --- Attachment Filename Logic ---
+                has_attach_bool = msg.get('hasAttachments', False)
+                attach_icon = ""
 
-                if has_attachment:
-                   if not attach:
-                       attach_flag =False
+                if has_attach_bool:
+                    # Fetch the actual filenames for this specific message
+                    attach_url = f"https://graph.microsoft.com/v1.0/me/messages/{msg_id}/attachments"
+                    att_res = requests.get(attach_url, headers=headers)
+                    if att_res.status_code == 200:
+                        att_data = att_res.json().get('value', [])
+                        fnames = [a.get('name') for a in att_data if a.get('name')]
+                        attach_icon = f" [📎 {', '.join(fnames)}]" if fnames else " [📎]"
 
-                if sender:
-                    if sender not in sender_display:
-                        sender_flag = False
+                # --- Filtering Logic ---
+                # 1. Attachment Filter
+                if has_attachment and not has_attach_bool:
+                    continue
 
-                dt = datetime.datetime.fromisoformat(date)
-                unix_timestamp = int(dt.timestamp())
+                # 2. Sender Filter
+                if sender and sender.lower() not in sender_display.lower():
+                    continue
 
-                if unix_timestamp>date_from or unix_timestamp<date_to:
-                    date_flag = False
+                # 3. Date Filter (Fixing the logic: MUST be BETWEEN from and to)
+                dt = datetime.datetime.fromisoformat(date_str)
+                unix_ts = int(dt.timestamp())
 
+                # If date_from is set, email must be >= date_from
+                if date_from and unix_ts < date_from:
+                    continue
+                # If date_to is set, email must be <= date_to
+                if date_to and unix_ts > date_to:
+                    continue
 
-
-
-
-
-                if sender_flag and attach_flag and date_flag:
-                    results.append(f"Date: {date}\nFrom: {sender_display}\nSubject: {subject}{attach}\n---")
-
+                # 4. Success - Add to results
+                results.append(
+                    f"Date: {dt.strftime('%Y-%m-%d %H:%M')}\nFrom: {sender_display}\nSubject: {subject}{attach_icon}\n---")
 
         except Exception as e:
             results.append(f"--- ERROR: {e} ---")

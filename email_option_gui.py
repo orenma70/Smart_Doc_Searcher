@@ -13,8 +13,7 @@ BUTTON_STYLE_OK = "background-color: #0000FF; color: white; border-radius: 4px; 
 BUTTON_STYLE_CANCEL = "background-color: #F44336; color: white; border-radius: 4px; padding: 6px; min-width: 150px; min-height: 20px;"
 
 FONT_SIZE_QSS = "font-size: 16pt;"
-
-
+FONT_SIZE_QSS_green = "font-size: 16pt; background-color: blue; color: white;"
 
 if Language == "English":
     sc_str = "Search Criteria"
@@ -22,7 +21,7 @@ if Language == "English":
     gst_str = "General Search Term:"
     fm_str = "Full Match"
     mf_str = "Mailbox Folder:"
-    email_str2 = "Email"
+    email_str2 = "          Email"
     from_str = "From:"
     dr_str = "Date Range"
     fd_str2 = "From Date:"
@@ -41,7 +40,7 @@ else:
     gst_str = "ביטוי כללי לחפוש"
     fm_str = "התאמה מלאה"
     mf_str = "ספריית מייל:"
-    email_str2 = "אימייל"
+    email_str2 = "              אימייל"
     from_str = "מאת:"
     dr_str = "טווח תאריכים"
     fd_str2 = "מתאריך:"
@@ -145,13 +144,13 @@ class EmailSearchDialog(QDialog):
 
         # Set 'INBOX' as the default selection (it's index 0, but good practice to ensure)
         self.directory_input.setCurrentText("INBOX")
-        self.directory_input.setStyleSheet(FONT_SIZE_QSS)
+        self.directory_input.setStyleSheet(FONT_SIZE_QSS_green)
 
         email_label = QLabel(email_str2)
         email_label.setStyleSheet(FONT_SIZE_QSS)
 
         self.email_input = QComboBox()
-        self.email_input.currentTextChanged.connect(self.on_email_changed)
+        #self.email_input.currentTextChanged.connect(self.on_email_changed)
         # Add the standard mailboxes as items
         self.email_input.addItem("Gmail")
         self.email_input.addItem("Outlook")
@@ -160,7 +159,7 @@ class EmailSearchDialog(QDialog):
 
         # Set 'INBOX' as the default selection (it's index 0, but good practice to ensure)
         self.email_input.setCurrentText(email_used)
-        self.email_input.setStyleSheet(FONT_SIZE_QSS)
+        self.email_input.setStyleSheet(FONT_SIZE_QSS_green)
 
         # The Directory input occupies Row 1
 
@@ -337,8 +336,8 @@ class EmailSearchDialog(QDialog):
         from config_reader import read_setup
 
         date_from_ts = self.date_from_input.dateTime().toSecsSinceEpoch()
-        date_to_ts = self.date_to_input.dateTime().toSecsSinceEpoch()
-        directory=directory = self.directory_input.currentText()
+        date_to_ts = self.date_to_input.dateTime().toSecsSinceEpoch() + 86400 # end of day
+        directory = self.directory_input.currentText()
         query = self.query_input.text()
 
         attachment_str = f"has:attachment larger:{self.min_size_input.value()}" if self.has_attachment_check.isChecked() else ""

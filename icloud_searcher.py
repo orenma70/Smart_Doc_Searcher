@@ -1,5 +1,5 @@
 import imaplib
-import email
+import email, re
 import datetime
 from email.utils import parsedate_to_datetime
 from PyQt5.QtCore import QObject, pyqtSignal
@@ -14,8 +14,7 @@ class ICloudAPISearcher(QObject):
         self.password = email_password  # NOT your Apple ID password
         self.server = server
 
-    def search_emails_api(self, query=None, sender=None, has_attachment=False, min_size=None, date_from=None,
-                          date_to=None):
+    def search_emails_api(self, query=None, sender=None, has_attachment=False, min_size=None, date_to=None, date_from=None):
         results = []
         mail = None
         try:
@@ -31,10 +30,13 @@ class ICloudAPISearcher(QObject):
                 if not mail_id: continue  # Skip empty results
                 try:
                     # Fetch header only
-                    status, msg_data = mail.fetch(mail_id, '(BODY.PEEK[HEADER])')
+                    #status, msg_data = mail.fetch(mail_id, '(BODY.PEEK[HEADER])')
+                    status, msg_data = mail.fetch(mail_id, '(BODY.PEEK[HEADER] BODYSTRUCTURE)')
+
                     if status != 'OK' or not msg_data[0]: continue
 
                     msg = email.message_from_bytes(msg_data[0][1])
+                    structure = str(msg_data[1])
 
                     # Decode Subject safely
                     raw_subject = msg.get('Subject', 'No Subject')
@@ -45,7 +47,7 @@ class ICloudAPISearcher(QObject):
                     ])
 
                     sender_display = msg.get('From', 'Unknown')
-                    results.append(f"Subject: {subject}\nFrom: {sender_display}\n---")
+
 
                     date_str = msg.get("Date")
 
@@ -54,8 +56,24 @@ class ICloudAPISearcher(QObject):
                     display_date = dt.strftime('%Y-%m-%d %H:%M')
 
                     # 4. Attachment Check (Looking at the BODYSTRUCTURE response)
-                    has_attach = b'ATTACHMENT' in msg_data[0][0].upper()
+                    content_type = msg.get('Content-Type', '')
+                    has_attach = 'multipart/mixed' in content_type.lower()
+                    if has_attach:
+                        filenames = re.findall(r'\"FILENAME\" \"(.*?)\"', structure)
+                        fname_str = filenames[0]
+                        if len(filenames) > 1:
+                            fname_str += " " + filenames[1]
+                        if len(filenames) > 2:
+                            fname_str += " " + filenames[2]
+                        if len(filenames) > 3:
+                            fname_str += f".. more  {len(filenames)-3} files"
+                    else:
+                        fname_str=""
+
+
                     attach_icon = " [📎]" if has_attach else ""
+                    att_str = "has attachment" if has_attach else ""
+
 
                     # 5. Filtering logic using the Unix TS and Sender strings
                     date_flag = True
@@ -68,8 +86,7 @@ class ICloudAPISearcher(QObject):
                         sender_flag = False
 
                     if date_flag and sender_flag:
-                        results.append(
-                            f"Date: {display_date}\nFrom: {sender_display}\nSubject: {subject}{attach_icon}\n---")
+                        results.append(f"Subject: {subject}\nFrom: {sender_display}\nDate: {display_date}\n:{att_str} {attach_icon} {fname_str}\n---")
 
 
                 except Exception as e:
