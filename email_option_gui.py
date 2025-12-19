@@ -1,4 +1,7 @@
-import sys
+import sys, time
+
+from torchgen.api.cpp import return_type
+
 from config_reader import Language
 from PyQt5.QtCore import QDate, Qt
 from config_reader import email_used
@@ -190,7 +193,7 @@ class EmailSearchDialog(QDialog):
         fromLable.setStyleSheet(FONT_SIZE_QSS)
 
 
-        self.date_from_input = QDateEdit(QDate.currentDate().addMonths(-12))
+        self.date_from_input = QDateEdit(QDate.currentDate().addYears(-4))
         self.date_from_input.setStyleSheet(FONT_SIZE_QSS)
         self.date_from_input.setCalendarPopup(True)
 
@@ -202,6 +205,8 @@ class EmailSearchDialog(QDialog):
         self.date_to_input.setStyleSheet(FONT_SIZE_QSS)
         self.date_to_input.setCalendarPopup(True)
 
+        self.date_from_input.dateChanged.connect(self.on_date_widget_modified)
+        self.date_to_input.dateChanged.connect(self.on_date_widget_modified)
 
         self.exact_date_combo = QComboBox()
         self.exact_date_combo.addItem("")
@@ -270,8 +275,7 @@ class EmailSearchDialog(QDialog):
                     else:
                         self.exact_date_combo.addItem(f" חודשים {m}", m)
 
-
-
+        self.exact_date_combo.currentIndexChanged.connect(self.handle_date_selection_change)
         date_layout.addWidget(self.exact_date_combo, 2, 1)
 
         # Toggle layout for Newer/Older
@@ -279,6 +283,9 @@ class EmailSearchDialog(QDialog):
         self.radio_newer = QRadioButton(nt_str)
         self.radio_older = QRadioButton(od_str)
         self.radio_newer.setChecked(True)  # Default
+        self.radio_newer.toggled.connect(self.handle_date_selection_change)
+        self.radio_older.toggled.connect(self.handle_date_selection_change)
+
         period_toggle_layout.addWidget(self.radio_newer)
         period_layout_widget = QWidget()  # Container to help alignment
         period_toggle_layout.addWidget(self.radio_older)
@@ -310,6 +317,9 @@ class EmailSearchDialog(QDialog):
 
         main_layout.addLayout(filter_layout)
         self.directory_input.currentTextChanged.connect(self.update_fromto_label)
+
+        self.on_date_widget_modified()
+
 
     def on_email_changed(self, new_email):
         self.email_input.setCurrentText(new_email)
@@ -389,14 +399,81 @@ class EmailSearchDialog(QDialog):
         self.params = self.get_search_parameters()
         self.accept()
 
+    def handle_date_selection_change(self):
+        self.date_from_input.blockSignals(True)
+        self.date_to_input.blockSignals(True)
+        self.radio_newer.blockSignals(True)
+        self.radio_older.blockSignals(True)
+        self.exact_date_combo.blockSignals(True)
+
+        val = self.exact_date_combo.currentData()
+        text = self.exact_date_combo.currentText()
+
+        if val:
+            # Determine suffix: 'm' for months, 'y' for years
+            if Language == "English":
+                Msuffix = True if "Month" in text else False
+            else:
+                Msuffix = True if "חודש" in text else False
+        else:
+            Msuffix = True
+
+        if Msuffix:
+            self.date_from_input.setDate(QDate.currentDate().addMonths(-val))
+        else:
+            self.date_from_input.setDate(QDate.currentDate().addYears(-val))
+
+        if self.radio_newer.isChecked():
+            self.date_to_input.setDate(QDate.currentDate())
+        else:
+            self.date_to_input.setDate(QDate.currentDate().addYears(-10-val))
     # ----------------------------------------------------------------------
+        self.date_from_input.blockSignals(False)
+        self.date_to_input.blockSignals(False)
+        self.radio_newer.blockSignals(False)
+        self.radio_older.blockSignals(False)
+        self.exact_date_combo.blockSignals(False)
+
+    def on_date_widget_modified(self):
+        # Temporarily stop the date widgets from shouting 'I changed!'
+        self.date_from_input.blockSignals(True)
+        self.date_to_input.blockSignals(True)
+        self.radio_newer.blockSignals(True)
+        self.radio_older.blockSignals(True)
+        self.exact_date_combo.blockSignals(True)
 
 
+        date_from_ts = self.date_from_input.dateTime().toSecsSinceEpoch()
+        date_to_ts = self.date_to_input.dateTime().toSecsSinceEpoch()  # end of day
+        curent_date = int(time.time())
+        Month_1 = int((curent_date-date_from_ts)/(24*3600*30))
+        Year_1 = round(Month_1/12)
+
+        Month_0 = int((curent_date - date_to_ts) / (24 * 3600 * 30))
+        Year_0 = int(Month_0/12)
+        if Month_0 == 0:
+            self.radio_newer.setChecked(True)
+            if Month_1<12:
+                self.exact_date_combo.setCurrentIndex(Month_1)
+            else:
+                self.exact_date_combo.setCurrentIndex(min(11+Year_1, self.exact_date_combo.count() - 1))
+        else:
+            self.radio_older.setChecked(True)
+            if Month_0<12:
+                self.exact_date_combo.setCurrentIndex(Month_0)
+            else:
+                self.exact_date_combo.setCurrentIndex(min(11+Year_0, self.exact_date_combo.count() - 1))
+        self.date_from_input.blockSignals(False)
+        self.date_to_input.blockSignals(False)
+        self.radio_newer.blockSignals(False)
+        self.radio_older.blockSignals(False)
+        self.exact_date_combo.blockSignals(False)
 # FUNCTION TO LAUNCH AND GET DATA
 # ----------------------------------------------------------------------
 
 # FUNCTION TO LAUNCH AND GET DATA
 # ----------------------------------------------------------------------
+
 
 def launch_search_dialog():
     """

@@ -87,7 +87,8 @@ class ICloudAPISearcher(QObject):
 
                     if date_flag and sender_flag:
                         results.append(f"Subject: {subject}\nFrom: {sender_display}\nDate: {display_date}\n:{att_str} {attach_icon} {fname_str}\n---")
-
+                    else:
+                        results.append(f"No results\n")
 
                 except Exception as e:
                     print(f"Error on msg {mail_id}: {e}")

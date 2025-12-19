@@ -77,6 +77,7 @@ class OutlookAPISearcher(QObject):
             # --- API Request ---
             endpoint = "https://graph.microsoft.com/v1.0/me/messages"
             params = {
+                '$expand': 'attachments($select=name)',
                 '$search': f'"{query}"' if query else None,
                 '$select': 'id,subject,from,receivedDateTime,hasAttachments',  # Need 'id' to fetch attachments
                 '$top': 25
@@ -95,19 +96,15 @@ class OutlookAPISearcher(QObject):
                 from_dict = msg.get('from', {}).get('emailAddress', {})
                 sender_display = f"{from_dict.get('name')} <{from_dict.get('address')}>"
                 date_str = msg.get('receivedDateTime', '').replace('Z', '+00:00')
-
+                attachments_data = msg.get('attachments', [])
+                fnames = [a.get('name') for a in attachments_data]
                 # --- Attachment Filename Logic ---
                 has_attach_bool = msg.get('hasAttachments', False)
                 attach_icon = ""
 
                 if has_attach_bool:
-                    # Fetch the actual filenames for this specific message
-                    attach_url = f"https://graph.microsoft.com/v1.0/me/messages/{msg_id}/attachments"
-                    att_res = requests.get(attach_url, headers=headers)
-                    if att_res.status_code == 200:
-                        att_data = att_res.json().get('value', [])
-                        fnames = [a.get('name') for a in att_data if a.get('name')]
-                        attach_icon = f" [📎 {', '.join(fnames)}]" if fnames else " [📎]"
+                    attach_icon = f" [📎 {', '.join(fnames)}]" if fnames else " [📎]"
+
 
                 # --- Filtering Logic ---
                 # 1. Attachment Filter
