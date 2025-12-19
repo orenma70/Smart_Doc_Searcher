@@ -1433,8 +1433,8 @@ class SearchApp(QtWidgets.QWidget):
         search_params = self.email_search_params
         query = search_params["query"]
         directory = search_params["directory"]
-
-
+        elapsed_time = time.time() - self.time0
+        self.results_area.append(f"<b>Search completed in: {elapsed_time:.2f} seconds</b>")
         # This method runs in the main GUI thread and receives 'results' list
         BLUE_STYLE = 'style="color: blue; font-weight: bold;"'
         self.g31_container.setStyleSheet(Container_STYLE_QSSgray)
@@ -1535,7 +1535,7 @@ class SearchApp(QtWidgets.QWidget):
 
         # 3. Connect signals:
         #    a) When the thread starts, execute the worker's run() method.
-
+        self.time0 = time.time()
         if provider_key == "Gmail":
             self.thread.started.connect(lambda: self.email_worker.search_emails_api(gmail_raw_query))
             self.email_worker.search_finished.connect(self.display_gmail_results)

@@ -65,25 +65,28 @@ class OutlookAPISearcher(QObject):
 
         return result.get("access_token")
 
-    def search_emails_api(self, query=None, sender=None, has_attachment=False, min_size=None, date_to=None ,date_from=None):
+    def search_emails_api(self, query=None, sender=None, has_attachment=False, min_size=None, date_to=None,
+                          date_from=None):
         results = []
+        # Use a requests Session for much faster consecutive calls
+        session = requests.Session()
         try:
             token = self._get_access_token()
-            headers = {
+            session.headers.update({
                 'Authorization': f'Bearer {token}',
-                'ConsistencyLevel': 'eventual'
-            }
+                'ConsistencyLevel': 'eventual',
+                'Content-Type': 'application/json'
+            })
 
-            # --- API Request ---
             endpoint = "https://graph.microsoft.com/v1.0/me/messages"
             params = {
-                '$expand': 'attachments($select=name)',
                 '$search': f'"{query}"' if query else None,
-                '$select': 'id,subject,from,receivedDateTime,hasAttachments',  # Need 'id' to fetch attachments
+                '$select': 'id,subject,from,receivedDateTime,hasAttachments',
                 '$top': 25
             }
 
-            response = requests.get(endpoint, headers=headers, params=params)
+            # 1. Fast Metadata Search
+            response = session.get(endpoint, params=params)
             response.raise_for_status()
             messages = response.json().get('value', [])
 
@@ -91,44 +94,35 @@ class OutlookAPISearcher(QObject):
                 return [f"No results found for: {query}"]
 
             for msg in messages:
-                msg_id = msg.get('id')
-                subject = msg.get('subject') or "No Subject"
-                from_dict = msg.get('from', {}).get('emailAddress', {})
-                sender_display = f"{from_dict.get('name')} <{from_dict.get('address')}>"
+                # --- Quick Filter Check (Filters before fetching attachments) ---
                 date_str = msg.get('receivedDateTime', '').replace('Z', '+00:00')
-                attachments_data = msg.get('attachments', [])
-                fnames = [a.get('name') for a in attachments_data]
-                # --- Attachment Filename Logic ---
+                dt = datetime.datetime.fromisoformat(date_str)
+                unix_ts = int(dt.timestamp())
+
+                if date_from and unix_ts < date_from: continue
+                if date_to and unix_ts > date_to: continue
+
+                # --- Attachment Logic (Only fetch names if actually needed) ---
                 has_attach_bool = msg.get('hasAttachments', False)
                 attach_icon = ""
 
                 if has_attach_bool:
-                    attach_icon = f" [📎 {', '.join(fnames)}]" if fnames else " [📎]"
+                    # Fetching attachment names specifically for this message
+                    # This is often faster than $expand because it's a simple indexed lookup
+                    att_url = f"{endpoint}/{msg.get('id')}/attachments?$select=name"
+                    att_res = session.get(att_url)
+                    if att_res.status_code == 200:
+                        fnames = [a.get('name') for a in att_res.json().get('value', [])]
+                        attach_icon = f" [📎 {', '.join(fnames)}]" if fnames else " [📎]"
 
+                if has_attachment and not has_attach_bool: continue
 
-                # --- Filtering Logic ---
-                # 1. Attachment Filter
-                if has_attachment and not has_attach_bool:
-                    continue
+                from_dict = msg.get('from', {}).get('emailAddress', {})
+                sender_display = f"{from_dict.get('name')} <{from_dict.get('address')}>"
+                if sender and sender.lower() not in sender_display.lower(): continue
 
-                # 2. Sender Filter
-                if sender and sender.lower() not in sender_display.lower():
-                    continue
-
-                # 3. Date Filter (Fixing the logic: MUST be BETWEEN from and to)
-                dt = datetime.datetime.fromisoformat(date_str)
-                unix_ts = int(dt.timestamp())
-
-                # If date_from is set, email must be >= date_from
-                if date_from and unix_ts < date_from:
-                    continue
-                # If date_to is set, email must be <= date_to
-                if date_to and unix_ts > date_to:
-                    continue
-
-                # 4. Success - Add to results
                 results.append(
-                    f"Date: {dt.strftime('%Y-%m-%d %H:%M')}\nFrom: {sender_display}\nSubject: {subject}{attach_icon}\n---")
+                    f"Date: {dt.strftime('%Y-%m-%d %H:%M')}\nFrom: {sender_display}\nSubject: {msg.get('subject')}{attach_icon}\n---")
 
         except Exception as e:
             results.append(f"--- ERROR: {e} ---")
