@@ -3,7 +3,11 @@ import email.utils
 import os, io
 import json
 import requests
-from PyQt5 import QtWidgets, QtCore, QtGui
+from PyQt5 import QtWidgets, QtCore
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton
+
+
+from PyQt5.QtCore import Qt  # <--- THIS IS OFTEN MISSING
 from docx import Document
 from PIL import Image
 import re
@@ -37,6 +41,8 @@ from outlook_searcher import OutlookAPISearcher
 from utils import get_outlook_date
 from gmail_searcher import GmailAPISearcher
 from icloud_searcher import ICloudAPISearcher
+from speech2text import StopDialog
+
 
 from ui_setup import non_sync_cloud_str, sync_cloud_str
 import pytesseract
@@ -991,6 +997,19 @@ class SearchApp(QtWidgets.QWidget):
         self.resize(1700, 1200)
 
 
+
+    def speech2text_handler(self):
+        # 1. Determine language and mode from your radio buttons
+        # Replace 'radio_manual' with your actual radio button object name
+        self.current_voice_result = ""
+        lang = "he-IL" if not ui_setup.isLTR == "Hebrew" else "en-US"
+
+        # 2. Initialize the worker
+
+
+        text = StopDialog.get_voice_text(parent=self, language=lang)
+
+        self.search_input.setText(text)
 
 
     def handle_chatgpt_mode(self, folder, query):

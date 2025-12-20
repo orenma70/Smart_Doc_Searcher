@@ -1,4 +1,7 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
+import speech_recognition as sr
+from PyQt5.QtCore import QThread, pyqtSignal, QObject
+from speech2text import VoiceRecorderApp
 from google.genai import types
 from config_reader import LOCAL_MODE, CLIENT_PREFIX_TO_STRIP, Language
 from utils import (CHECKBOX_STYLE_QSS_black, CHECKBOX_STYLE_QSS_gray, CHECKBOX_STYLE_QSS_blue, CHECKBOX_STYLE_QSS_red,
@@ -201,9 +204,15 @@ def setup_ui(self):
 
     self.cloud_gemini_radio.toggled.connect(self.handle_radio_check)
 
+    self.start_btn = QtWidgets.QPushButton("🎤")
+    self.start_btn.setFont(font)
+    self.start_btn.clicked.connect(self.speech2text_handler)
+
+
     if isLTR:
         search_layout.addWidget(self.search_btn)
         search_layout.addWidget(self.label)
+        search_layout.addWidget(self.start_btn)
         search_layout.addWidget(self.search_input)
         search_layout.addSpacing(100)
         search_layout.addWidget(self.non_cloud_gemini_radio)
@@ -213,6 +222,7 @@ def setup_ui(self):
         search_layout.addWidget(self.non_cloud_gemini_radio)
         search_layout.addSpacing(100)
         search_layout.addWidget(self.search_input)
+        search_layout.addWidget(self.start_btn)
         search_layout.addWidget(self.label)
         search_layout.addWidget(self.search_btn)
 
@@ -339,13 +349,14 @@ def setup_ui(self):
         g31_layout = QtWidgets.QVBoxLayout(g31_container)
 
 
+
     g3_layout.addWidget(self.nongemini_radio)
     g3_layout.addWidget(self.gemini_radio)
     g31_layout.addWidget(self.email_push)
     g3_layout.addStretch()
 
     g3_container.setStyleSheet(Container_STYLE_QSS)
-    g31_container.setStyleSheet(Container_STYLE_QSSgray)
+    g31_container.setStyleSheet(Container_STYLE_QSS)
     small_gap = 10
     g11_container = QtWidgets.QWidget()
     g11_layout = QtWidgets.QHBoxLayout(g11_container)
@@ -434,6 +445,14 @@ def setup_ui(self):
 
     g_group_layout = QtWidgets.QVBoxLayout(self.e_group_widget)
     g_group_layout.addWidget(g3_container)
+    g_group_layout.addSpacing(4)
+    line = QtWidgets.QFrame()
+    line.setFrameShape(QtWidgets.QFrame.HLine)
+    line.setFrameShadow(QtWidgets.QFrame.Plain)
+    line.setStyleSheet("color: black; border: 10px solid  black;")
+    g_group_layout.addWidget(line)
+    g_group_layout.addSpacing(4)
+
     g_group_layout.addWidget(g31_container)
 
     if chat_mode:
@@ -528,3 +547,39 @@ def setup_ui(self):
 
     layout.addWidget(self.results_area)
 
+
+import sys
+
+
+class UIDebugger(QtWidgets.QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Layout Debugger")
+        self.resize(1400, 800)
+
+        # --- Dummy placeholders for functionality ---
+        self.load_last_dir = lambda: None
+        self.browse_directory = lambda: print("Browse clicked")
+        self.execute_search = lambda: print("Search clicked")
+        self.speech2text = lambda: None
+        self.handle_radio_check = lambda: print("Cloud toggle")
+        self.email_search = lambda: print("Email Search clicked")
+        self.update_search_button_text = lambda: None
+        self.save_all2file = lambda: print("Save clicked")
+        self.clear_all = lambda: self.results_area.clear()
+
+        # Execute your setup function
+        setup_ui(self)
+
+
+if __name__ == "__main__":
+    app = QtWidgets.QApplication(sys.argv)
+    app.setStyle("Fusion")
+
+    # Adjust font globally for the demo if needed
+    font = QtGui.QFont("Arial", 12)
+    app.setFont(font)
+
+    window = UIDebugger()
+    window.show()
+    sys.exit(app.exec_())
