@@ -4,10 +4,6 @@ import os, io
 import json
 import requests
 from PyQt5 import QtWidgets, QtCore
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton
-
-
-from PyQt5.QtCore import Qt  # <--- THIS IS OFTEN MISSING
 from docx import Document
 from PIL import Image
 import re
@@ -1184,7 +1180,7 @@ class SearchApp(QtWidgets.QWidget):
     def save_all2file(self):
         """Clears the search input and, most importantly, the results display area."""
         doc = Document()
-        path = os.path.join(self.dir_edit.text().strip(), "results.docx")
+        path = os.path.join(CLIENT_PREFIX_TO_STRIP, "results.docx")
         text = self.results_area.toPlainText()
         # Add the text as a paragraph
         doc.add_paragraph(text)
@@ -1198,172 +1194,171 @@ class SearchApp(QtWidgets.QWidget):
         start_time = time.time()
         print(f"Start search")
 
-        folder = self.dir_edit.text().strip()
-        query = self.search_input.text().strip()
+        folders = self.dir_edit.text().strip()
+        folder_list = [f.strip() for f in folders.split(',') if f.strip()]
         self.results_area.clear()
+        total_found = 0
 
-        if self.cloud_gemini_radio.isChecked() or (self.non_cloud_gemini_radio.isChecked() and self.gemini_radio.isChecked()):
+        for folder in folder_list:
 
-            if not self.sync0 or self.gemini_radio.isChecked():
-                if  self.non_cloud_gemini_radio.isChecked():
-                    self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
-                    self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_gray)
-                    self.display_root.setText("☁️ Bucket")
-                    self.display_root.setStyleSheet("color: white; background-color: lightblue;")
-                    QtWidgets.QApplication.processEvents()
 
-                normalized_path = folder.replace("\\", "/")
-                prefix_to_strip = CLIENT_PREFIX_TO_STRIP.replace("\\", "/")
-                # 3. Strip trailing slashes from both for consistent comparison (e.g., C:/a/מצרפי/)
-                normalized_path = normalized_path.strip('/')
-                prefix_to_strip = prefix_to_strip.strip('/')
+            query = self.search_input.text().strip()
 
-                # 4. Perform the strip only if the path starts with the prefix
-                if normalized_path.lower().startswith(prefix_to_strip.lower()):
-                    # Strip the prefix, plus the slash that separates the prefix from the folder path
-                    gcs_directory_path = normalized_path[len(prefix_to_strip):].strip('/')
+
+            if self.cloud_gemini_radio.isChecked() or (self.non_cloud_gemini_radio.isChecked() and self.gemini_radio.isChecked()):
+
+                if not self.sync0 or self.gemini_radio.isChecked():
+                    if  self.non_cloud_gemini_radio.isChecked():
+                        self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
+                        self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_gray)
+                        self.display_root.setText("☁️ Bucket")
+                        self.display_root.setStyleSheet("color: white; background-color: lightblue;")
+                        QtWidgets.QApplication.processEvents()
+
+                    normalized_path = folder.replace("\\", "/")
+                    prefix_to_strip = CLIENT_PREFIX_TO_STRIP.replace("\\", "/")
+                    # 3. Strip trailing slashes from both for consistent comparison (e.g., C:/a/מצרפי/)
+                    normalized_path = normalized_path.strip('/')
+                    prefix_to_strip = prefix_to_strip.strip('/')
+
+                    # 4. Perform the strip only if the path starts with the prefix
+                    if normalized_path.lower().startswith(prefix_to_strip.lower()):
+                         gcs_directory_path = normalized_path[len(prefix_to_strip):].strip('/')
+                    else:
+                        # If no prefix match, use the normalized path as is
+                        gcs_directory_path = normalized_path.strip('/')
+
+                    folder_in = gcs_directory_path
+
+                    end_time = time.time()
+                    latency = end_time - start_time
+                    print(f"pre on_search_button_clicked: {latency:.2f} seconds")
+
+                    answer = on_search_button_clicked(self, query, folder_in, self.non_cloud_gemini_radio.isChecked())
+
+
+                    #perform_search(query, directory_path=folder)
+                    display_gemini_result(self, self.results_area, answer, folder_in)
+
+                    if self.non_cloud_gemini_radio.isChecked():
+                        self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
+                        self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_gray)
+                        self.display_root.setText(CLIENT_PREFIX_TO_STRIP)
+
+
+                    continue
+                    
                 else:
-                    # If no prefix match, use the normalized path as is
-                    gcs_directory_path = normalized_path.strip('/')
-
-                folder = gcs_directory_path
-
-                end_time = time.time()
-                latency = end_time - start_time
-                print(f"pre on_search_button_clicked: {latency:.2f} seconds")
-
-                answer = on_search_button_clicked(self, query, folder, self.non_cloud_gemini_radio.isChecked())
-
-
-                #perform_search(query, directory_path=folder)
-                display_gemini_result(self, self.results_area, answer, folder)
-
-                if self.non_cloud_gemini_radio.isChecked():
                     self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
                     self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_gray)
                     self.display_root.setText(CLIENT_PREFIX_TO_STRIP)
 
 
+
+
+            folder_in = self.display_root.text() +  "/"+ folder
+            if not os.path.isdir(folder_in):
+                QtWidgets.QMessageBox.warning(self, "שגיאה", "התיקיה לא קיימת.")
                 return
+            if not query:
+                QtWidgets.QMessageBox.warning(self, "שגיאה", "אנא הזן מילות חיפוש.")
+                return
+
+            # Parse query for AND/OR
+            mode = 'any'
+            # Determine search mode based on radio button selection
+            if self.all_word_search_radio.isChecked():
+                mode = 'all'
+
+
+                # Determine mode
+            if self.gemini_radio.isChecked():
+                search_mode = chat_mode
+            elif self.exact_search_radio.isChecked():
+                search_mode = 'full'
             else:
-                self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
-                self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_gray)
-                self.display_root.setText(CLIENT_PREFIX_TO_STRIP)
+                search_mode = 'partial'  # default
+
+
+            words = [w.strip() for w in query.replace('+', ' ').replace('&', ' ').split()]
+
+            count = 0
+            for root, _, files in os.walk(folder_in):
+                total_files = sum([len(files) for r, d, files in os.walk(folder_in)])
+                for filename in files:
+                    count += 1
+                    if filename.startswith('~$'):
+                        continue  # Skip temporary backup files
+
+                    if should_skip_file(filename):
+                        print(f"SKIPPING: {filename} (Temporary Lock File)")
+                        continue
+
+
+                    self.progressBar.setValue(int(count / total_files * 100))
+
+                    QtWidgets.QApplication.processEvents()
+                    path = os.path.join(root, filename)
+
+                    path_str = f"{root} \t {filename}"
+                    filename_lower = filename.lower()
+                    if filename_lower.endswith('.docx'):
+                        try:
+                            if search_mode == 'gemini':
+
+                                #doc_text = extract_text_from_docx(path)
+                                #if doc_text:
+                                #    answer = ask_gemini_with_context(doc_text, query)
+
+                                gemini_input_parts = extract_docx_content(str(path), query)
+                                client = genai.Client()
+                                response = client.models.generate_content(
+                                     model='gemini-2.5-flash',
+                                     contents=gemini_input_parts
+                                )
+                                answer = response.text.strip()
 
 
 
 
-        folder = self.display_root.text() +  "/"+ folder
-        if not os.path.isdir(folder):
-            QtWidgets.QMessageBox.warning(self, "שגיאה", "התיקיה לא קיימת.")
-            return
-        if not query:
-            QtWidgets.QMessageBox.warning(self, "שגיאה", "אנא הזן מילות חיפוש.")
-            return
+                            # Example usage (assuming this function is part of a class):
+                                display_gemini_result(self, self.results_area, answer, str(path))
 
-        # Parse query for AND/OR
-        mode = 'any'
-        # Determine search mode based on radio button selection
-        if self.all_word_search_radio.isChecked():
-            mode = 'all'
+                            else:
+                                matches = docx_search(path, words, mode, search_mode)
 
+                                for paragraph in matches:
+                                    self.append_result(path, paragraph, words)
+                                    total_found += 1
+                        except:
+                            continue
+                    elif filename_lower.endswith('.pdf'):
+                        try:
 
-            # Determine mode
-        if self.gemini_radio.isChecked():
-            search_mode = chat_mode
-        elif self.exact_search_radio.isChecked():
-            search_mode = 'full'
-        else:
-            search_mode = 'partial'  # default
+                            matches =""
+                            if search_mode == 'gemini':
+                                answer = ""
+                                pdf_text, image_list = extract_text_and_images_from_pdf(str(path))
+                                if image_list:
+                                    answer = ask_gemini_with_contextNimage(pdf_text, image_list, query)
+                                elif pdf_text:
+                                    answer = ask_gemini_with_context(pdf_text, query)
 
-
-        words = [w.strip() for w in query.replace('+', ' ').replace('&', ' ').split()]
-
-        self.results_area.clear()
-        total_found = 0
-
-        count = 0
+                                display_gemini_result(self, self.results_area, answer, str(path))
 
 
+                            else:
+                                pdf_text, image_list = extract_text_and_images_from_pdf(str(path))
+                                matches = pdf_search(self, path, words, mode, search_mode)
 
+                            # matches2 = pdf_search_flags(path, words, search_mode)
 
-
-        for root, _, files in os.walk(folder):
-            total_files = sum([len(files) for r, d, files in os.walk(folder)])
-            for filename in files:
-                count += 1
-                if filename.startswith('~$'):
-                    continue  # Skip temporary backup files
-
-                if should_skip_file(filename):
-                    print(f"SKIPPING: {filename} (Temporary Lock File)")
-                    continue
-
-
-                self.progressBar.setValue(int(count / total_files * 100))
-
-                QtWidgets.QApplication.processEvents()
-                path = os.path.join(root, filename)
-
-                path_str = f"{root} \t {filename}"
-                filename_lower = filename.lower()
-                if filename_lower.endswith('.docx'):
-                    try:
-                        if search_mode == 'gemini':
-
-                            #doc_text = extract_text_from_docx(path)
-                            #if doc_text:
-                            #    answer = ask_gemini_with_context(doc_text, query)
-
-                            gemini_input_parts = extract_docx_content(str(path), query)
-                            client = genai.Client()
-                            response = client.models.generate_content(
-                                 model='gemini-2.5-flash',
-                                 contents=gemini_input_parts
-                            )
-                            answer = response.text.strip()
-
-
-
-
-                        # Example usage (assuming this function is part of a class):
-                            display_gemini_result(self, self.results_area, answer, str(path))
-
-                        else:
-                            matches = docx_search(path, words, mode, search_mode)
 
                             for paragraph in matches:
-                                self.append_result(path, paragraph, words)
+                                self.append_result2(path, paragraph, words, search_mode )
                                 total_found += 1
-                    except:
-                        continue
-                elif filename_lower.endswith('.pdf'):
-                    try:
-
-                        matches =""
-                        if search_mode == 'gemini':
-                            answer = ""
-                            pdf_text, image_list = extract_text_and_images_from_pdf(str(path))
-                            if image_list:
-                                answer = ask_gemini_with_contextNimage(pdf_text, image_list, query)
-                            elif pdf_text:
-                                answer = ask_gemini_with_context(pdf_text, query)
-
-                            display_gemini_result(self, self.results_area, answer, str(path))
-
-
-                        else:
-                            pdf_text, image_list = extract_text_and_images_from_pdf(str(path))
-                            matches = pdf_search(self, path, words, mode, search_mode)
-
-                        # matches2 = pdf_search_flags(path, words, search_mode)
-
-
-                        for paragraph in matches:
-                            self.append_result2(path, paragraph, words, search_mode )
-                            total_found += 1
-                    except:
-                        continue
+                        except:
+                            continue
 
         if self.cloud_gemini_radio.isChecked() and self.sync0:
             self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
@@ -1578,7 +1573,31 @@ class SearchApp(QtWidgets.QWidget):
         # 4. Start the thread (This runs worker.run() safely in the background)
         self.thread.start()
 
+    from PyQt5 import QtWidgets, QtCore
 
+    def select_files_and_folders(self, initial_path="/"):
+        dialog = QtWidgets.QFileDialog(self)
+        start_path = initial_path.replace("\\", "/")
+        if os.path.exists(start_path):
+            dialog.setDirectory(start_path)
+        else:
+            dialog.setDirectory(QtCore.QDir.homePath())
+
+        dialog.setOption(QtWidgets.QFileDialog.DontUseNativeDialog, True)
+
+        # 1. Set to Directory mode - this makes folders selectable
+        # but normally limits you to one. We fix that next.
+        dialog.setFileMode(QtWidgets.QFileDialog.Directory)
+
+        # 2. Find the internal view (the list of files) and force 'Extended Selection'
+        # This is what allows CTRL+Click to work for multiple folders
+        for view in dialog.findChildren(QtWidgets.QAbstractItemView):
+            view.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+
+        if dialog.exec_() == QtWidgets.QDialog.Accepted:
+            # returns the list of all highlighted items (files or folders)
+            return dialog.selectedFiles()
+        return []
 
     def browse_directory(self):
         """
@@ -1591,28 +1610,48 @@ class SearchApp(QtWidgets.QWidget):
 
 
         if not self.cloud_gemini_radio.isChecked():
-            initial_path = self.dir_edit.text()
-            initial_path = self.display_root.text() + "/" + initial_path
-            dir_path = QtWidgets.QFileDialog.getExistingDirectory(self, "בחר תיקיה", initial_path or "/")
+
+            root_dir = self.display_root.text()
+            initial_path_from_gui = self.dir_edit.text()
+            if "," in initial_path_from_gui:
+                # Split by comma and take the first part, then strip extra spaces
+                initial_path_from_gui = initial_path_from_gui.split(",")[0].strip()
+
+            initial_path = root_dir + "/" + initial_path_from_gui
+
+
+
+            dir_path_list = self.select_files_and_folders(initial_path)
+            dir_path_str = ""
             # dir_path = RLO + dir_path # Assuming RLO is defined elsewhere
-            if dir_path:
+            if dir_path_list:
                 prefix_to_strip = CLIENT_PREFIX_TO_STRIP.replace("\\", "/")
                 prefix_to_strip = prefix_to_strip.strip('/')
-
+                for dir_path in dir_path_list:
                 # 4. Perform the strip only if the path starts with the prefix
-                if dir_path.lower().startswith(prefix_to_strip.lower()):
-                    # Strip the prefix, plus the slash that separates the prefix from the folder path
-                    dir_path = dir_path[len(prefix_to_strip):].strip('/')
-                else:
-                    # If no prefix match, use the normalized path as is
-                    dir_path = dir_path.strip('/')
-                self.dir_edit.setText(dir_path)
-                self.save_last_dir()
+                    if dir_path.lower().startswith(prefix_to_strip.lower()):
+                        # Strip the prefix, plus the slash that separates the prefix from the folder path
+                        dir_path = dir_path[len(prefix_to_strip):].strip('/')
+                    else:
+                        # If no prefix match, use the normalized path as is
+                        dir_path = dir_path.strip('/')
+
+                    dir_path_str = dir_path_str  + dir_path + ","
+            self.dir_edit.setText(dir_path_str)
+            self.save_last_dir()
         else:
             # --- GCS BROWSER INTEGRATION ---
 
             # 1. Use the static method to show the custom dialog
-            initial_path = self.dir_edit.text()
+            initial_path_from_gui = self.dir_edit.text()
+            if "," in initial_path_from_gui:
+                # Split by comma and take the first part, then strip extra spaces
+                initial_path_from_gui = initial_path_from_gui.split(",")[0].strip()
+
+            initial_path = initial_path_from_gui
+
+
+
             selected_gcs_path = GCSBrowserDialog.get_directory(parent=self, initial_path=initial_path)
 
             # 2. Update the main application's path if a selection was made
