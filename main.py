@@ -828,7 +828,7 @@ def pdf_search(self, path, words, mode='any', search_mode='partial', read_from_t
                 # Existing ChatGPT logic...
                 content_summary = "\n".join(lines)
 
-                query = self.search_input.text().strip()
+                query = self.search_input.toPlainText().strip()
                 prompt = f"כתוב את התשובה בשפה העברית על בסיס הטקסט הבא רק אם יש לך תשובה החלטית אחרת השב $$$$:\n{content_summary}\nשאלה: {query}"
                 pre = f"<span style='color:blue;'>— עמוד {pnum}</span>"
                 time.sleep(2)
@@ -1004,6 +1004,7 @@ class SearchApp(QtWidgets.QWidget):
 
 
         text = StopDialog.get_voice_text(parent=self, language=lang)
+        #text = StopDialog.get_listen_voice_text(parent=self, language=lang)
 
         self.search_input.setText(text)
 
@@ -1202,7 +1203,7 @@ class SearchApp(QtWidgets.QWidget):
         for folder in folder_list:
 
 
-            query = self.search_input.text().strip()
+            query = self.search_input.toPlainText().strip()
 
 
             if self.cloud_gemini_radio.isChecked() or (self.non_cloud_gemini_radio.isChecked() and self.gemini_radio.isChecked()):
@@ -1247,7 +1248,7 @@ class SearchApp(QtWidgets.QWidget):
 
 
                     continue
-                    
+
                 else:
                     self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
                     self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_gray)

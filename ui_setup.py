@@ -1,8 +1,4 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
-import speech_recognition as sr
-from PyQt5.QtCore import QThread, pyqtSignal, QObject
-from speech2text import VoiceRecorderApp
-from google.genai import types
 from config_reader import LOCAL_MODE, CLIENT_PREFIX_TO_STRIP, Language
 from utils import (CHECKBOX_STYLE_QSS_black, CHECKBOX_STYLE_QSS_gray, CHECKBOX_STYLE_QSS_blue, CHECKBOX_STYLE_QSS_red,
                    Container_STYLE_QSS, Radio_STYLE_QSS_green, Radio_STYLE_QSS_red, QRadioButton_STYLE_QSS_green_1515bg,QRadioButton_STYLE_QSS_green_1616bg,
@@ -150,7 +146,12 @@ def setup_ui(self):
 
     # Search query input
 
-    self.search_input = QtWidgets.QLineEdit()
+    self.search_input = QtWidgets.QTextEdit()
+    self.search_input.setMaximumHeight(200)
+    self.search_input.setLineWrapMode(QtWidgets.QTextEdit.WidgetWidth)
+
+
+
     self.search_input.setFont(font)
 
     self.search_input.setText(setText_str)
@@ -213,7 +214,6 @@ def setup_ui(self):
         search_layout.addWidget(self.search_btn)
         search_layout.addWidget(self.label)
         search_layout.addWidget(self.start_btn)
-        search_layout.addWidget(self.search_input)
         search_layout.addSpacing(100)
         search_layout.addWidget(self.non_cloud_gemini_radio)
         search_layout.addWidget(self.cloud_gemini_radio)
@@ -221,7 +221,6 @@ def setup_ui(self):
         search_layout.addWidget(self.cloud_gemini_radio)
         search_layout.addWidget(self.non_cloud_gemini_radio)
         search_layout.addSpacing(100)
-        search_layout.addWidget(self.search_input)
         search_layout.addWidget(self.start_btn)
         search_layout.addWidget(self.label)
         search_layout.addWidget(self.search_btn)
@@ -461,6 +460,7 @@ def setup_ui(self):
     # Create a parent horizontal layout to contain both groups side by side
 
     both_groups_layout.addWidget(g4_container)
+    both_groups_layout.addWidget(self.search_input)
     both_groups_layout.addStretch()
     both_groups_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
     self.g1_layout_index = both_groups_layout.count()  # Get the index for the middle widget
@@ -563,6 +563,8 @@ class UIDebugger(QtWidgets.QWidget):
         self.execute_search = lambda: print("Search clicked")
         self.speech2text = lambda: None
         self.handle_radio_check = lambda: print("Cloud toggle")
+        self.speech2text_handler = lambda: None
+
         self.email_search = lambda: print("Email Search clicked")
         self.update_search_button_text = lambda: None
         self.save_all2file = lambda: print("Save clicked")

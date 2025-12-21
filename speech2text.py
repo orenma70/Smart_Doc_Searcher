@@ -1,12 +1,12 @@
-import sys
+import sys, time
 import speech_recognition as sr
-from PyQt5.QtCore import QThread, pyqtSignal, QObject, Qt
+from PyQt5.QtCore import QThread, pyqtSignal, QObject, Qt, QTimer
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QTextEdit, QLabel, QComboBox, QDialog, QRadioButton, QButtonGroup)
 
+
 class VoiceWorker(QObject):
     text_received = pyqtSignal(str)
-    status_signal = pyqtSignal(str)
     finished = pyqtSignal()
 
     def __init__(self, language="he-IL"):
@@ -14,160 +14,157 @@ class VoiceWorker(QObject):
         self.language = language
         self.recognizer = sr.Recognizer()
         self.microphone = sr.Microphone()
-        self.stop_listening = None  # For manual mode
+        self.stop_listening = None
+        self._has_processed = False
 
-    # --- MODE 1: AUTOMATIC (LISTEN) ---
     def run_automatic(self):
         with self.microphone as source:
-            self.status_signal.emit("Listening (Auto-stop on silence)...")
             try:
                 self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
                 audio = self.recognizer.listen(source, timeout=10)
                 self.process_audio(audio)
-            except Exception as e:
-                self.text_received.emit(f"Error: {str(e)}")
-            finally:
+            except Exception:
                 self.finished.emit()
 
-    # --- MODE 2: MANUAL ---
     def start_manual(self):
+        self._has_processed = False
         with self.microphone as source:
             self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
-        self.status_signal.emit("Recording (Manual mode)...")
-        # Starts background thread
         self.stop_listening = self.recognizer.listen_in_background(self.microphone, self.manual_callback)
 
     def manual_callback(self, recognizer, audio):
+        self._has_processed = True
         self.process_audio(audio)
-        self.finished.emit()
 
     def stop_manual(self):
         if self.stop_listening:
             self.stop_listening(wait_for_stop=False)
+            self.stop_listening = None
+            QTimer.singleShot(800, self._force_finish_if_stuck)
+
+    def _force_finish_if_stuck(self):
+        if not self._has_processed:
+            self.finished.emit()
 
     def process_audio(self, audio):
         try:
             text = self.recognizer.recognize_google(audio, language=self.language)
             self.text_received.emit(text)
-        except Exception as e:
-            self.text_received.emit(f"Speech not recognized: {str(e)}")
+        except Exception:
+            self.text_received.emit("")
+        finally:
+            self.finished.emit()
 
 
 class StopDialog(QDialog):
-    def __init__(self, parent=None, language="he-IL"):
+    def __init__(self, parent=None, language="he-IL", external=False):
         super().__init__(parent)
-        self.setWindowTitle("Voice Recording")
-        self.setMinimumSize(400, 250)
-
-        # 1. Initialize Worker inside the Dialog
-        self.worker = VoiceWorker(language=language)
+        self.language = language
         self.final_text = ""
+        self.external = external  # Flag to know if we are being called from outside
 
-        # UI Setup
+        self.setWindowTitle("Voice Input Active")
+        self.setMinimumSize(400, 250)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+
         layout = QVBoxLayout(self)
-        self.label = QLabel("🔴 Recording... Speak now.")
+        self.label = QLabel("🔴 Recording...")
         self.label.setAlignment(Qt.AlignCenter)
+        self.label.setStyleSheet("font-size: 22px; font-weight: bold; color: #d32f2f;")
         layout.addWidget(self.label)
 
         self.stop_btn = QPushButton("STOP RECORDING")
-        self.stop_btn.setFixedHeight(60)
-        self.stop_btn.clicked.connect(self.process_and_close)
+        self.stop_btn.setFixedHeight(80)
+        self.stop_btn.setStyleSheet(
+            "background-color: #ff4d4d; color: white; font-size: 18px; font-weight: bold; border-radius: 10px;")
         layout.addWidget(self.stop_btn)
 
-        # 2. Start recording immediately
-        self.worker.start_manual()
+        if self.external:
+            # Called from get_voice_text: Dialog handles its own worker
+            self.stop_btn.clicked.connect(self.process_and_wait)
+            self.worker = VoiceWorker(language=self.language)
+            self.worker.text_received.connect(self.handle_result)
+            self.worker.start_manual()
+        else:
+            # Standalone mode: Just behave as a simple close button
+            self.stop_btn.clicked.connect(self.accept)
 
-    def process_and_close(self):
+    def process_and_wait(self):
         self.label.setText("⌛ Processing speech... please wait.")
         self.stop_btn.setEnabled(False)
-
-        # Connect signal to the result handler
-        self.worker.text_received.connect(self.handle_result)
-        # Tell worker to stop and send to Google
         self.worker.stop_manual()
 
     def handle_result(self, text):
         self.final_text = text
-        self.accept()  # This releases the .exec_() lock
+        self.accept()
 
     @staticmethod
     def get_voice_text(parent=None, language="he-IL"):
-        """This matches your GCS Browser style"""
-        dialog = StopDialog(parent=parent, language=language)
+        dialog = StopDialog(parent=parent, language=language, external=True)
         if dialog.exec_() == QDialog.Accepted:
             return dialog.final_text
         return ""
+
 
 class VoiceRecorderApp(QWidget):
     def __init__(self):
         super().__init__()
         self.initUI()
+        self.worker = None
+        self.thread = None
 
     def initUI(self):
-        layout = QVBoxLayout()
-
-        # Language Selection
-        top_row = QHBoxLayout()
-        top_row.addWidget(QLabel("Language:"))
+        layout = QVBoxLayout(self)
         self.lang_combo = QComboBox()
         self.lang_combo.addItem("Hebrew", "he-IL")
         self.lang_combo.addItem("English", "en-US")
-        top_row.addWidget(self.lang_combo)
-        layout.addLayout(top_row)
+        layout.addWidget(self.lang_combo)
 
-        # Radio Buttons for Mode
-        mode_layout = QHBoxLayout()
         self.radio_listen = QRadioButton("Listen (Auto)")
         self.radio_manual = QRadioButton("Manual (Stop Button)")
-        self.radio_listen.setChecked(True)
+        self.radio_manual.setChecked(True)
+        layout.addWidget(self.radio_listen)
+        layout.addWidget(self.radio_manual)
 
-        self.mode_group = QButtonGroup()
-        self.mode_group.addButton(self.radio_listen)
-        self.mode_group.addButton(self.radio_manual)
-
-        mode_layout.addWidget(self.radio_listen)
-        mode_layout.addWidget(self.radio_manual)
-        layout.addLayout(mode_layout)
-
-        # Status and Text Area
-        self.status_label = QLabel("Select mode and press Start")
+        self.status_label = QLabel("Ready")
         layout.addWidget(self.status_label)
         self.text_display = QTextEdit()
         layout.addWidget(self.text_display)
 
         self.start_btn = QPushButton("🎤")
         self.start_btn.setFixedHeight(60)
-        self.start_btn.setFixedWidth(60)
         self.start_btn.clicked.connect(self.handle_recording)
         layout.addWidget(self.start_btn)
 
-        self.setLayout(layout)
-        self.setWindowTitle("Walla/Outlook Voice Input")
-        self.resize(450, 400)
-
     def handle_recording(self):
         self.text_display.clear()
+        self.start_btn.setEnabled(False)
+        self.status_label.setText("Recording...")
         lang = self.lang_combo.currentData()
         self.worker = VoiceWorker(language=lang)
-        self.worker.text_received.connect(self.text_display.setText)
-        self.worker.status_signal.connect(self.status_label.setText)
+        self.worker.text_received.connect(self.text_display.setText, Qt.QueuedConnection)
+        self.worker.finished.connect(self.on_finished, Qt.QueuedConnection)
 
         if self.radio_listen.isChecked():
-            # Auto Mode logic
             self.thread = QThread()
             self.worker.moveToThread(self.thread)
             self.thread.started.connect(self.worker.run_automatic)
-            self.worker.finished.connect(self.thread.quit)
-            self.start_btn.setEnabled(False)
-            self.thread.finished.connect(lambda: self.start_btn.setEnabled(True))
             self.thread.start()
         else:
-            # Manual Mode logic
             self.worker.start_manual()
-            dialog = StopDialog(self)
-            if dialog.exec_() == QDialog.Accepted:
-                self.status_label.setText("Processing...")
-                self.worker.stop_manual()
+            # external=False means the worker is owned by VoiceRecorderApp
+            dialog = StopDialog(self, language=lang, external=False)
+            dialog.exec_()
+            self.status_label.setText("Processing...")
+            self.worker.stop_manual()
+
+    def on_finished(self):
+        self.status_label.setText("Done")
+        self.start_btn.setEnabled(True)
+        if self.thread:
+            self.thread.quit()
+            self.thread.wait()
+            self.thread = None
 
 
 if __name__ == '__main__':
