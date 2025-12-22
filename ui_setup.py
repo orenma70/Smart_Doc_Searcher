@@ -1,6 +1,6 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
 from config_reader import LOCAL_MODE, CLIENT_PREFIX_TO_STRIP, Language
-from utils import (CHECKBOX_STYLE_QSS_black, CHECKBOX_STYLE_QSS_gray, CHECKBOX_STYLE_QSS_blue, CHECKBOX_STYLE_QSS_red,
+from utils import (CHECKBOX_STYLE_QSS_black, CHECKBOX_STYLE_QSS_gray, CHECKBOX_STYLE_QSS_blue, CHECKBOX_STYLE_QSS_red, CHECKBOX_STYLE_QSS_green,
                    Container_STYLE_QSS, Radio_STYLE_QSS_green, Radio_STYLE_QSS_red, QRadioButton_STYLE_QSS_green_1515bg,QRadioButton_STYLE_QSS_green_1616bg,
                    QRadioButton_STYLE_QSS_green_1520bg, CHECKBOX_STYLE_QSS_black22, saveclear_STYLE_QSS, CHECKBOX_STYLE_QSS_gray22)
 Vertic_Flag = True
@@ -53,7 +53,7 @@ else:
     dir_edit_LayoutDirection = QtCore.Qt.LayoutDirection.RightToLeft
 
     search_btn_str = "! לחצן החיפוש !"
-    press_search_btn_str = "⏳ מבצע חיפוש..."
+    press_search_btn_str = "...⏳ מבצע חיפוש"
 
 
 
@@ -160,7 +160,7 @@ def setup_ui(self):
     self.search_btn = QtWidgets.QPushButton(search_btn_str)
 
 
-    self.search_btn.setStyleSheet(CHECKBOX_STYLE_QSS_red)
+    self.search_btn.setStyleSheet(CHECKBOX_STYLE_QSS_green)
     self.search_btn.setFont(font2)
     self.search_btn.clicked.connect(self.execute_search)
 
@@ -192,6 +192,7 @@ def setup_ui(self):
     # 4. Assemble the container
     self.container_layout.addWidget(self.top_row_widget)
     self.container_layout.addWidget(self.search_input)
+    self.container_layout.addWidget(self.search_btn)
 
     # 2. This ensures the container stays at the TOP of the available space
     # instead of floating in the middle of the screen
@@ -230,8 +231,6 @@ def setup_ui(self):
 
 
     if isLTR:
-        search_layout.addSpacing(300)
-        search_layout.addWidget(self.search_btn)
         search_layout.addStretch()
         search_layout.addWidget(self.non_cloud_gemini_radio)
         search_layout.addWidget(self.cloud_gemini_radio)
@@ -239,8 +238,7 @@ def setup_ui(self):
         search_layout.addWidget(self.cloud_gemini_radio)
         search_layout.addWidget(self.non_cloud_gemini_radio)
         search_layout.addStretch()
-        search_layout.addWidget(self.search_btn)
-        search_layout.addSpacing(300)
+
 
     layout.addLayout(search_layout)
     self.nongemini_radio = QtWidgets.QRadioButton(nongemini_radio_str)

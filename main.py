@@ -38,7 +38,7 @@ from utils import get_outlook_date
 from gmail_searcher import GmailAPISearcher
 from icloud_searcher import ICloudAPISearcher
 from speech2text import StopDialog
-from utils import QRadioButton_STYLE_QSS_green_1515bg, QRadioButton_STYLE_QSS_green_1520bg
+from utils import QRadioButton_STYLE_QSS_green_1515bg, QRadioButton_STYLE_QSS_green_1520bg, CHECKBOX_STYLE_QSS_green, CHECKBOX_STYLE_QSS_red
 
 
 from ui_setup import non_sync_cloud_str, sync_cloud_str
@@ -1111,7 +1111,7 @@ class SearchApp(QtWidgets.QWidget):
     def save_all2file(self):
         """Clears the search input and, most importantly, the results display area."""
         doc = Document()
-        path = os.path.join(CLIENT_PREFIX_TO_STRIP, "results.docx")
+        path = os.path.join(CLIENT_PREFIX_TO_STRIP, "results" + self.last_queryNmode + ".docx")
         text = self.results_area.toPlainText()
         # Add the text as a paragraph
         doc.add_paragraph(text)
@@ -1123,14 +1123,20 @@ class SearchApp(QtWidgets.QWidget):
     def execute_search(self):
         query = self.search_input.toPlainText().strip()
 
-        if not query:
+        if not query or "🎤" in query :
             return
+
+        if self.gemini_radio.isChecked():
+            self.last_queryNmode = "_Chat_" + query
+        else:
+            self.last_queryNmode = "_Search_" + query
 
         start_time = time.time()
         print(f"Start search")
         self.search_btn.setText(ui_setup.press_search_btn_str)
-        self.search_btn.setEnabled(False)
+        self.search_btn.setStyleSheet(CHECKBOX_STYLE_QSS_red)
         QtWidgets.QApplication.processEvents()
+        self.search_btn.setEnabled(False)
 
         folders = self.dir_edit.text().strip()
         folder_list = [f.strip() for f in folders.split(',') if f.strip()]
@@ -1297,6 +1303,7 @@ class SearchApp(QtWidgets.QWidget):
 
         self.search_btn.setText(ui_setup.search_btn_str)
         self.search_btn.setEnabled(True)
+        self.search_btn.setStyleSheet(CHECKBOX_STYLE_QSS_green)
 
         if self.cloud_gemini_radio.isChecked() and self.sync0:
             self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
@@ -1335,6 +1342,9 @@ class SearchApp(QtWidgets.QWidget):
         from_address = search_params["fromto_address"].lower()
         self.results_area.append(f"\n--- Email Search Results --- <span {BLUE_STYLE}>{query}</span> in <span {BLUE_STYLE}>{directory}</span>")
         email_address = email_name = ""
+
+        self.last_queryNmode = "_Email_" + query
+
         for result in results[1:]:
             email_date_string = None
             email_timestamp = 0
@@ -1384,6 +1394,7 @@ class SearchApp(QtWidgets.QWidget):
     def display_gmail_results(self, results):
         search_params = self.email_search_params
         query = search_params["query"]
+        self.last_queryNmode = "_" + search_params["provider_key"] + "_" + query
         directory = search_params["directory"]
         elapsed_time = time.time() - self.time0
         self.results_area.append(f"<b>Search completed in: {elapsed_time:.2f} seconds</b>")

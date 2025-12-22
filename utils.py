@@ -121,18 +121,13 @@ CHECKBOX_STYLE_QSS_gray ="""
 
 CHECKBOX_STYLE_QSS_red ="""
                     QCheckBox, QPushButton {
-                        background-color: #00FF00 ; /*  Light gray background for the frame */
+                        background-color: #FF0000 ; /*  Light gray background for the frame */
                         color: #000000; /* Optional: set text color */
                         font-size: 20pt;
                         font-weight: bold;
                         padding: 5px; /* Optional: add internal padding */
                         border: 6px solid #FF0000;
                         border-radius: 6px;
-                    }
-                    QPushButton:pressed {
-                        background-color: #FF0000; /* Darker red */
-                        border: 6px solid #800000; /* Darker border */
-                        color: #ffffff;            /* Optional: change text to white for contrast */
                     }
                     QCheckBox::indicator {
                         width: 25px;
@@ -147,6 +142,23 @@ CHECKBOX_STYLE_QSS_blue ="""
                         font-size: 20pt;
                         font-weight: bold;
                         padding: 5px; /* Optional: add internal padding */
+                        border: 6px solid #00FF00;
+                        border-radius: 6px;
+                    }
+                    QCheckBox::indicator {
+                        width: 25px;
+                        height: 25px;
+                    }
+                    """
+
+
+CHECKBOX_STYLE_QSS_green ="""
+                    QCheckBox, QPushButton {
+                        background-color: #00FF00 ; /*  Light gray background for the frame */
+                        color: #000000; /* Optional: set text color */
+                        font-size: 20pt;
+                        font-weight: bold;
+                        padding: 5px; /* Optional: add internal padding */
                         border: 6px solid #FF0000;
                         border-radius: 6px;
                     }
@@ -155,6 +167,7 @@ CHECKBOX_STYLE_QSS_blue ="""
                         height: 25px;
                     }
                     """
+
 
 Container_STYLE_QSS="""
                  QWidget {

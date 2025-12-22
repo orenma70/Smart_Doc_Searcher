@@ -20,6 +20,15 @@ class VoiceWorker(QObject):
     def run_automatic(self):
         with self.microphone as source:
             try:
+                # How long to wait for the user to start speaking
+                self.recognizer.pause_threshold = 0.8  # Increase this if words are cut off (default is 0.8)
+
+                # This is crucial: it prevents cutting off the last word if you pause slightly
+                self.recognizer.phrase_threshold = 0.3
+
+                # This handles the silence at the end
+                self.recognizer.non_speaking_duration = 0.5
+
                 self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
                 audio = self.recognizer.listen(source, timeout=10)
                 self.process_audio(audio)
@@ -40,7 +49,8 @@ class VoiceWorker(QObject):
         if self.stop_listening:
             self.stop_listening(wait_for_stop=False)
             self.stop_listening = None
-            QTimer.singleShot(800, self._force_finish_if_stuck)
+            QTimer.singleShot(2000, self._force_finish_if_stuck)
+
 
     def _force_finish_if_stuck(self):
         if not self._has_processed:
