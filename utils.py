@@ -8,6 +8,33 @@ def get_gmail_date(timestamp):
     # Gmail needs YYYY/MM/DD for 'after:' and 'before:'
     return datetime.datetime.fromtimestamp(timestamp).strftime('%Y/%m/%d')
 
+CHECKBOX_STYLE_QSS_black22 ="""
+        QPushButton {
+            background-color: black;
+            color: white;
+            border: 6px solid #0000ff;
+            border-radius: 4px;
+            padding: 6px 12px;
+        }
+        QPushButton:hover {
+            background-color: #0069d9;
+            border-color: #0056b3;
+        }
+    """
+
+CHECKBOX_STYLE_QSS_gray22 ="""
+        QPushButton, QLabel {
+            background-color: #f0f0f0;
+            color: black;
+            border: 2px solid #0f0f0f;
+            border-radius: 4px;
+            padding: 2px 12px;
+        }
+        QPushButton:hover {
+            background-color: #0069d9;
+            border-color: #0056b3;
+        }
+    """
 CHECKBOX_STYLE_QSS_black ="""
                     QCheckBox {
                         background-color: black ; /* #f0f0f0 Light gray background for the frame */
@@ -77,7 +104,7 @@ QRadioButton_STYLE_QSS_green_1515bg="""
                 """
 
 CHECKBOX_STYLE_QSS_gray ="""
-                    QCheckBox {
+                    QCheckBox, QPushButton {
                         background-color: #f0f0f0 ; /*  Light gray background for the frame */
                         color: #000000; /* Optional: set text color */
                         font-size: 20pt;
@@ -93,14 +120,19 @@ CHECKBOX_STYLE_QSS_gray ="""
                     """
 
 CHECKBOX_STYLE_QSS_red ="""
-                    QCheckBox {
-                        background-color: red ; /*  Light gray background for the frame */
-                        color: #0000FF; /* Optional: set text color */
+                    QCheckBox, QPushButton {
+                        background-color: #00FF00 ; /*  Light gray background for the frame */
+                        color: #000000; /* Optional: set text color */
                         font-size: 20pt;
                         font-weight: bold;
                         padding: 5px; /* Optional: add internal padding */
                         border: 6px solid #FF0000;
                         border-radius: 6px;
+                    }
+                    QPushButton:pressed {
+                        background-color: #FF0000; /* Darker red */
+                        border: 6px solid #800000; /* Darker border */
+                        color: #ffffff;            /* Optional: change text to white for contrast */
                     }
                     QCheckBox::indicator {
                         width: 25px;
@@ -109,7 +141,7 @@ CHECKBOX_STYLE_QSS_red ="""
                     """
 
 CHECKBOX_STYLE_QSS_blue ="""
-                    QCheckBox {
+                    QCheckBox, QPushButton {
                         background-color: blue ; /*  Light gray background for the frame */
                         color: #0000FF; /* Optional: set text color */
                         font-size: 20pt;

@@ -38,6 +38,7 @@ from utils import get_outlook_date
 from gmail_searcher import GmailAPISearcher
 from icloud_searcher import ICloudAPISearcher
 from speech2text import StopDialog
+from utils import QRadioButton_STYLE_QSS_green_1515bg, QRadioButton_STYLE_QSS_green_1520bg
 
 
 from ui_setup import non_sync_cloud_str, sync_cloud_str
@@ -1030,89 +1031,18 @@ class SearchApp(QtWidgets.QWidget):
         layout = self.both_groups_layout  # Use the class attribute reference
         if self.gemini_radio.isChecked():
             self.search_btn.setText(ui_setup.gemini_radio_str)
-            self.label.setText(ui_setup.label_gpt_str)
+            self.search_input.setPlaceholderText(ui_setup.label_gpt_str)
             self.g_group_widget.setVisible(False)
 
-            self.nongemini_radio.setStyleSheet("""
-                QRadioButton {
-                    background-color: #f0f0f0; /* Light gray background for the frame */
-                    color: #333333; /* Optional: set text color */                    
-                    padding: 5px; /* Optional: add internal padding */
-                }
-                QRadioButton::indicator {
-                    width: 15px;
-                    height: 15px;
-                    border-radius: 10px;
-                    border: 6px solid black;
-                }
-                QRadioButton::indicator:checked {
-                    background-color: green;
-                }
-                """)
-            self.gemini_radio.setStyleSheet("""
-                           QRadioButton {
-                               background-color: #0000ff; /* Light gray background for the frame */
-                               color: #333333; /* Optional: set text color */
-                               padding: 5px; /* Optional: add internal padding */
-                           }
-                           QRadioButton::indicator {
-                               width: 15px;
-                               height: 15px;
-                               border-radius: 10px;
-                               border: 6px solid black;
-                           }
-                           QRadioButton::indicator:checked {
-                               background-color: green;
-                           }
-                           """)
+            self.nongemini_radio.setStyleSheet(QRadioButton_STYLE_QSS_green_1515bg)
+            self.gemini_radio.setStyleSheet(QRadioButton_STYLE_QSS_green_1520bg)
         else:
             self.search_btn.setText(ui_setup.search_btn_str)
-            self.label.setText(ui_setup.label_str)
-            #self.setPlaceholderText(ui_setup.search_input_words_str)
-            # 4. Show the widget
+            self.search_input.setPlaceholderText(ui_setup.label_str)
             self.g_group_widget.setVisible(True)
 
-            # 1. Check if the spacer is currently in the layout at the expected index
-            #item = layout.itemAt(self.g1_layout_index)
-            #if item is self.g1_placeholder:
-                # 2. Remove the spacer
-            #    layout.removeItem(self.g1_placeholder)
-
-            # 3. Insert the container widget back into the layout
-            # The index should be safe if the spacer was removed.
-
-            self.nongemini_radio.setStyleSheet("""
-                QRadioButton {
-                    background-color: #0000ff; /* Light gray background for the frame */
-                    color: #333333; /* Optional: set text color */
-                    padding: 5px; /* Optional: add internal padding */
-                }
-                QRadioButton::indicator {
-                    width: 15px;
-                    height: 15px;
-                    border-radius: 10px;
-                    border: 6px solid black;
-                }
-                QRadioButton::indicator:checked {
-                    background-color: green;
-                }
-                """)
-            self.gemini_radio.setStyleSheet("""
-                QRadioButton {
-                    background-color: #f0f0f0; /* Light gray background for the frame */
-                    color: #333333; /* Optional: set text color */
-                    padding: 5px; /* Optional: add internal padding */
-                }
-                QRadioButton::indicator {
-                    width: 15px;
-                    height: 15px;
-                    border-radius: 10px;
-                    border: 6px solid black;
-                }
-                QRadioButton::indicator:checked {
-                    background-color: green;
-                }
-                """)
+            self.nongemini_radio.setStyleSheet(QRadioButton_STYLE_QSS_green_1520bg)
+            self.gemini_radio.setStyleSheet(QRadioButton_STYLE_QSS_green_1515bg)
 
     # --- FINAL ATTEMPT: ShellExecuteW to bypass shell ambiguity ---
         # In SearchApp class
@@ -1191,9 +1121,16 @@ class SearchApp(QtWidgets.QWidget):
 
 
     def execute_search(self):
-        # --- 4. מדידת זמן: סיום והצגה ---
+        query = self.search_input.toPlainText().strip()
+
+        if not query:
+            return
+
         start_time = time.time()
         print(f"Start search")
+        self.search_btn.setText(ui_setup.press_search_btn_str)
+        self.search_btn.setEnabled(False)
+        QtWidgets.QApplication.processEvents()
 
         folders = self.dir_edit.text().strip()
         folder_list = [f.strip() for f in folders.split(',') if f.strip()]
@@ -1202,11 +1139,8 @@ class SearchApp(QtWidgets.QWidget):
 
         for folder in folder_list:
 
-
-            query = self.search_input.toPlainText().strip()
-
-
             if self.cloud_gemini_radio.isChecked() or (self.non_cloud_gemini_radio.isChecked() and self.gemini_radio.isChecked()):
+
 
                 if not self.sync0 or self.gemini_radio.isChecked():
                     if  self.non_cloud_gemini_radio.isChecked():
@@ -1360,6 +1294,9 @@ class SearchApp(QtWidgets.QWidget):
                                 total_found += 1
                         except:
                             continue
+
+        self.search_btn.setText(ui_setup.search_btn_str)
+        self.search_btn.setEnabled(True)
 
         if self.cloud_gemini_radio.isChecked() and self.sync0:
             self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)

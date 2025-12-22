@@ -2,10 +2,13 @@ from PyQt5 import QtWidgets, QtCore, QtGui
 from config_reader import LOCAL_MODE, CLIENT_PREFIX_TO_STRIP, Language
 from utils import (CHECKBOX_STYLE_QSS_black, CHECKBOX_STYLE_QSS_gray, CHECKBOX_STYLE_QSS_blue, CHECKBOX_STYLE_QSS_red,
                    Container_STYLE_QSS, Radio_STYLE_QSS_green, Radio_STYLE_QSS_red, QRadioButton_STYLE_QSS_green_1515bg,QRadioButton_STYLE_QSS_green_1616bg,
-                   QRadioButton_STYLE_QSS_green_1520bg, Container_STYLE_QSSgray, saveclear_STYLE_QSS)
+                   QRadioButton_STYLE_QSS_green_1520bg, CHECKBOX_STYLE_QSS_black22, saveclear_STYLE_QSS, CHECKBOX_STYLE_QSS_gray22)
 Vertic_Flag = True
 isLTR = Language == "English" # left to right or RTL
 chat_mode = True
+
+
+
 
 
 if isLTR:
@@ -21,10 +24,10 @@ if isLTR:
     dir_edit_alignment_choice = QtCore.Qt.AlignmentFlag.AlignLeft
     dir_edit_LayoutDirection = QtCore.Qt.LayoutDirection.LeftToRight
     search_btn_str = "! Start Search !"
-    label_str = " Enter Search Words ✏️-->"
-    label_gpt_str = " Ask your question ✏️-->"
-    #search_input_words_str = "Enter here search words"
-    setText_str = "default message here"
+    press_search_btn_str = "⏳ Searching..."
+    label_str = "↓ Enter Search Words ↓"
+    label_gpt_str = " Ask your question"
+    setText_str = "type message here OR press 🎤 and record"
     clear_btn_str = "Clear 🗑️"
 
     nongemini_radio_str = " Keyword Matching"  # Semantic Search "
@@ -49,16 +52,16 @@ else:
     dir_edit_alignment_choice = QtCore.Qt.AlignmentFlag.AlignRight
     dir_edit_LayoutDirection = QtCore.Qt.LayoutDirection.RightToLeft
 
-
-
-
-
     search_btn_str = "! לחצן החיפוש !"
-    label_str = "  הכנסת מילות חיפוש ✏️-->"
-    label_gpt_str = " הכנסת השאלה ✏️-->"
-    #search_input_words_str = "Enter here search words"
+    press_search_btn_str = "⏳ מבצע חיפוש..."
+
+
+
+
+    label_str = "↓ הכנסת מילות חיפוש ↓"
+    label_gpt_str = "↓ הכנסת השאלה ↓"
     search_input_question_str = "הכנסת השאלה"
-    setText_str =  "טסלה"  #  "מי היא חברת הליסינג?"     "מה גיל הילדים?"    "מי האקטואר? "ללימודי"
+    setText_str =  "הקלד שאלה או לחץ 🎤 והקלט"
     clear_btn_str = " ניקוי 🗑️ "
 
     nongemini_radio_str = "  חיפוש מילים  "
@@ -147,36 +150,54 @@ def setup_ui(self):
     # Search query input
 
     self.search_input = QtWidgets.QTextEdit()
-    self.search_input.setMaximumHeight(200)
-    self.search_input.setLineWrapMode(QtWidgets.QTextEdit.WidgetWidth)
-
-
-
+    self.search_input.setPlaceholderText("Type or speak your search...")
+    self.search_input.setMaximumHeight(220)
+    self.search_input.setAcceptRichText(False)  # Keeps it as plain text
     self.search_input.setFont(font)
-
     self.search_input.setText(setText_str)
+    self.search_input.setStyleSheet("background-color: white; color: black; border: 1px solid #ccc;")
+
     self.search_btn = QtWidgets.QPushButton(search_btn_str)
 
 
-    self.search_btn.setStyleSheet("""
-        QPushButton {
-            background-color: black;
-            color: white;
-            border: 6px solid #0000ff;
-            border-radius: 4px;
-            padding: 6px 12px;
-        }
-        QPushButton:hover {
-            background-color: #0069d9;
-            border-color: #0056b3;
-        }
-    """)
-    self.search_btn.setFont(font)
+    self.search_btn.setStyleSheet(CHECKBOX_STYLE_QSS_red)
+    self.search_btn.setFont(font2)
     self.search_btn.clicked.connect(self.execute_search)
 
+    self.search_container = QtWidgets.QWidget()
+    self.search_container.setStyleSheet("background: transparent; border: none;")
+    self.top_row_widget = QtWidgets.QWidget()
+    self.top_row_layout = QtWidgets.QHBoxLayout(self.top_row_widget)
+
+    self.top_row_layout.setContentsMargins(0, 0, 0, 0)
+    # 2. Create the layout and ATTACH it to self so it's not missing
+    self.container_layout = QtWidgets.QVBoxLayout(self.search_container)
+    self.container_layout.setContentsMargins(0, 0, 0, 0)
+    #self.container_layout.setSpacing(5)
+
+    row_height = 60
     self.label = QtWidgets.QLabel(label_str)
     self.label.setFont(font)
+    self.label.setStyleSheet(CHECKBOX_STYLE_QSS_gray22)
 
+    self.start_btn = QtWidgets.QPushButton("🎤")
+    self.start_btn.setFont(font)
+    self.start_btn.clicked.connect(self.speech2text_handler)
+    self.start_btn.setStyleSheet(CHECKBOX_STYLE_QSS_gray22)
+
+    self.label.setFixedHeight(row_height)
+    self.start_btn.setFixedHeight(row_height)
+    self.top_row_layout.addWidget(self.label)
+    self.top_row_layout.addWidget(self.start_btn)
+    # 4. Assemble the container
+    self.container_layout.addWidget(self.top_row_widget)
+    self.container_layout.addWidget(self.search_input)
+
+    # 2. This ensures the container stays at the TOP of the available space
+    # instead of floating in the middle of the screen
+    self.container_layout.setAlignment(QtCore.Qt.AlignTop)
+
+    self.container_layout.addStretch()
 
     self.cloud_gemini_radio = QtWidgets.QCheckBox(non_sync_cloud_str)
 
@@ -205,36 +226,31 @@ def setup_ui(self):
 
     self.cloud_gemini_radio.toggled.connect(self.handle_radio_check)
 
-    self.start_btn = QtWidgets.QPushButton("🎤")
-    self.start_btn.setFont(font)
-    self.start_btn.clicked.connect(self.speech2text_handler)
+
 
 
     if isLTR:
+        search_layout.addSpacing(300)
         search_layout.addWidget(self.search_btn)
-        search_layout.addWidget(self.label)
-        search_layout.addWidget(self.start_btn)
-        search_layout.addSpacing(100)
+        search_layout.addStretch()
         search_layout.addWidget(self.non_cloud_gemini_radio)
         search_layout.addWidget(self.cloud_gemini_radio)
     else:
         search_layout.addWidget(self.cloud_gemini_radio)
         search_layout.addWidget(self.non_cloud_gemini_radio)
-        search_layout.addSpacing(100)
-        search_layout.addWidget(self.start_btn)
-        search_layout.addWidget(self.label)
+        search_layout.addStretch()
         search_layout.addWidget(self.search_btn)
+        search_layout.addSpacing(300)
 
     layout.addLayout(search_layout)
     self.nongemini_radio = QtWidgets.QRadioButton(nongemini_radio_str)
     self.email_push = QtWidgets.QPushButton(email_push_str)
-    #if not chat_mode:
-    #self.nongemini_radio.setChecked(True)
 
 
     if  not chat_mode:
         self.search_input.setPlaceholderText(label_str)
         self.nongemini_radio.setStyleSheet(QRadioButton_STYLE_QSS_green_1520bg)
+
     else:
         self.search_input.setPlaceholderText(label_gpt_str)
 
@@ -316,6 +332,7 @@ def setup_ui(self):
     self.mode_group3 = QtWidgets.QButtonGroup()
     self.mode_group4 = QtWidgets.QButtonGroup()
 
+
     # Add buttons to respective groups
     self.mode_group1.addButton(self.gemini_radio)
     self.mode_group1.addButton(self.nongemini_radio)
@@ -329,13 +346,12 @@ def setup_ui(self):
     self.mode_group4.addButton(self.show_paragraph_mode_radio)
     self.mode_group4.addButton(self.show_line_mode_radio)
 
-    # Layout for the two groups of radio buttons
-    # First group (gemini / Search Words)
-    #g1_layout = QtWidgets.QHBoxLayout()
+
+
 
     g2_container = QtWidgets.QWidget()
     g2_layout = QtWidgets.QHBoxLayout(g2_container)
-    #g2_layout.addWidget(self.clear_btn)
+
 
     g3_container = QtWidgets.QWidget()
     g31_container = QtWidgets.QWidget()
@@ -399,7 +415,7 @@ def setup_ui(self):
 
     g4_container = QtWidgets.QWidget()
     g4_container.setStyleSheet(Container_STYLE_QSS)
-    g4_layout = QtWidgets.QHBoxLayout(g4_container)
+    g4_layout = QtWidgets.QVBoxLayout(g4_container)
     g4_layout.setAlignment(QtCore.Qt.AlignBottom)
     g4_layout.addWidget(self.clear_btn)
     g4_layout.addSpacing(small_gap)
@@ -413,7 +429,11 @@ def setup_ui(self):
         padding: 8px;
     """)
 
-
+    g5_container = QtWidgets.QWidget()
+    g5_container.setStyleSheet(Container_STYLE_QSS)
+    g5_container.setMaximumHeight(300)
+    g5_layout = QtWidgets.QVBoxLayout(g5_container)
+    g5_layout.addWidget(self.search_container)
 
     self.e_group_widget = QtWidgets.QWidget()
     self.e_group_widget.setStyleSheet("""
@@ -460,13 +480,14 @@ def setup_ui(self):
     # Create a parent horizontal layout to contain both groups side by side
 
     both_groups_layout.addWidget(g4_container)
-    both_groups_layout.addWidget(self.search_input)
-    both_groups_layout.addStretch()
+    both_groups_layout.addSpacing(60)
+    both_groups_layout.addWidget(g5_container)
+
     both_groups_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
     self.g1_layout_index = both_groups_layout.count()  # Get the index for the middle widget
     both_groups_layout.addWidget(self.g_group_widget)
 
-
+    both_groups_layout.addStretch()
     both_groups_layout.addSpacing(gap12)
     both_groups_layout.addWidget(self.e_group_widget)
     both_groups_layout.addSpacing(20)
@@ -476,11 +497,6 @@ def setup_ui(self):
     g1_container.setToolTip("איך לחפש, 1 האם כל המילה מופיעה 2 האם רק חלקה ")
     g2_container.setToolTip("ניקוי מסך התוצאות ומסך הבקשות")
     g3_container.setToolTip("איך לחפש. 1 מילים במסמך. 2 לשאול את הצ'אט. 3 לחפש באימייל. ")
-
-    # Create the label
-
-
-    # Add the label to g1_container's layout
 
 
     g3_container.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
