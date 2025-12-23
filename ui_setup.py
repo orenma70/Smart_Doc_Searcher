@@ -1,10 +1,11 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
-from config_reader import LOCAL_MODE, CLIENT_PREFIX_TO_STRIP, Language
+from config_reader import LOCAL_MODE, CLIENT_PREFIX_TO_STRIP, Language, Voice_recognition_mode
 from utils import (CHECKBOX_STYLE_QSS_black, CHECKBOX_STYLE_QSS_gray, CHECKBOX_STYLE_QSS_blue, CHECKBOX_STYLE_QSS_red, CHECKBOX_STYLE_QSS_green,
                    Container_STYLE_QSS, Radio_STYLE_QSS_green, Radio_STYLE_QSS_red, QRadioButton_STYLE_QSS_green_1515bg,QRadioButton_STYLE_QSS_green_1616bg,
                    QRadioButton_STYLE_QSS_green_1520bg, CHECKBOX_STYLE_QSS_black22, saveclear_STYLE_QSS, CHECKBOX_STYLE_QSS_gray22)
 Vertic_Flag = True
 isLTR = Language == "English" # left to right or RTL
+Voice_recognition_mode=Voice_recognition_mode
 chat_mode = True
 
 
@@ -26,8 +27,9 @@ if isLTR:
     search_btn_str = "! Start Search !"
     press_search_btn_str = "⏳ Searching..."
     label_str = "↓ Enter Search Words ↓"
-    label_gpt_str = " Ask your question"
-    setText_str = "type message here OR press 🎤 and record"
+    label_gpt_str = "↓ Enter question for Chat ↓"
+    search_in_str = " Type OR press 🎤 and automatic record "
+
     clear_btn_str = "Clear 🗑️"
 
     nongemini_radio_str = " Keyword Matching"  # Semantic Search "
@@ -56,12 +58,10 @@ else:
     press_search_btn_str = "...⏳ מבצע חיפוש"
 
 
-
-
     label_str = "↓ הכנסת מילות חיפוש ↓"
-    label_gpt_str = "↓ הכנסת השאלה ↓"
-    search_input_question_str = "הכנסת השאלה"
-    setText_str =  "הקלד שאלה או לחץ 🎤 והקלט"
+    label_gpt_str = "↓ הכנסת שאלה לצ'אט ↓"
+    search_in_str = "הקלדה או לחיצה על 🎤 להקלטה אוטומטית"
+
     clear_btn_str = " ניקוי 🗑️ "
 
     nongemini_radio_str = "  חיפוש מילים  "
@@ -154,7 +154,6 @@ def setup_ui(self):
     self.search_input.setMaximumHeight(220)
     self.search_input.setAcceptRichText(False)  # Keeps it as plain text
     self.search_input.setFont(font)
-    self.search_input.setText(setText_str)
     self.search_input.setStyleSheet("background-color: white; color: black; border: 1px solid #ccc;")
 
     self.search_btn = QtWidgets.QPushButton(search_btn_str)
@@ -176,7 +175,7 @@ def setup_ui(self):
     #self.container_layout.setSpacing(5)
 
     row_height = 60
-    self.label = QtWidgets.QLabel(label_str)
+    self.label = QtWidgets.QLabel("")
     self.label.setFont(font)
     self.label.setStyleSheet(CHECKBOX_STYLE_QSS_gray22)
 
@@ -244,14 +243,14 @@ def setup_ui(self):
     self.nongemini_radio = QtWidgets.QRadioButton(nongemini_radio_str)
     self.email_push = QtWidgets.QPushButton(email_push_str)
 
-
+    self.search_input.setPlaceholderText(search_in_str)
     if  not chat_mode:
-        self.search_input.setPlaceholderText(label_str)
+
+        self.label.setText(label_str)
         self.nongemini_radio.setStyleSheet(QRadioButton_STYLE_QSS_green_1520bg)
 
     else:
-        self.search_input.setPlaceholderText(label_gpt_str)
-
+        self.label.setText(label_gpt_str)
 
     self.nongemini_radio.setFont(font2)
 

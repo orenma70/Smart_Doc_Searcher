@@ -77,3 +77,4 @@ if CLIENT_PREFIX_TO_STRIP:
 
 emailsec=read_setup("emailsec")
 Language=read_setup("Language")
+Voice_recognition_mode=read_setup("Voice_recognition_mode")

@@ -9,9 +9,10 @@ class VoiceWorker(QObject):
     text_received = pyqtSignal(str)
     finished = pyqtSignal()
 
-    def __init__(self, language="he-IL"):
+    def __init__(self, language="he-IL", mode = "auto"):
         super().__init__()
         self.language = language
+        self.mode = mode
         self.recognizer = sr.Recognizer()
         self.microphone = sr.Microphone()
         self.stop_listening = None
@@ -21,13 +22,13 @@ class VoiceWorker(QObject):
         with self.microphone as source:
             try:
                 # How long to wait for the user to start speaking
-                self.recognizer.pause_threshold = 0.8  # Increase this if words are cut off (default is 0.8)
+                self.recognizer.pause_threshold = 1  # Increase this if words are cut off (default is 0.8)
 
                 # This is crucial: it prevents cutting off the last word if you pause slightly
                 self.recognizer.phrase_threshold = 0.3
 
                 # This handles the silence at the end
-                self.recognizer.non_speaking_duration = 0.5
+                self.recognizer.non_speaking_duration = 1
 
                 self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
                 audio = self.recognizer.listen(source, timeout=10)
@@ -49,7 +50,7 @@ class VoiceWorker(QObject):
         if self.stop_listening:
             self.stop_listening(wait_for_stop=False)
             self.stop_listening = None
-            QTimer.singleShot(2000, self._force_finish_if_stuck)
+            QTimer.singleShot(1000, self._force_finish_if_stuck)
 
 
     def _force_finish_if_stuck(self):
@@ -67,9 +68,10 @@ class VoiceWorker(QObject):
 
 
 class StopDialog(QDialog):
-    def __init__(self, parent=None, language="he-IL", external=False):
+    def __init__(self, parent=None, language="he-IL", external=False, mode = "auto"):
         super().__init__(parent)
         self.language = language
+        self.mode = mode
         self.final_text = ""
         self.external = external  # Flag to know if we are being called from outside
 
@@ -92,7 +94,7 @@ class StopDialog(QDialog):
         if self.external:
             # Called from get_voice_text: Dialog handles its own worker
             self.stop_btn.clicked.connect(self.process_and_wait)
-            self.worker = VoiceWorker(language=self.language)
+            self.worker = VoiceWorker(language=self.language, mode = self.mode)
             self.worker.text_received.connect(self.handle_result)
             self.worker.start_manual()
         else:
@@ -109,8 +111,8 @@ class StopDialog(QDialog):
         self.accept()
 
     @staticmethod
-    def get_voice_text(parent=None, language="he-IL"):
-        dialog = StopDialog(parent=parent, language=language, external=True)
+    def get_voice_text(parent=None, language="he-IL", mode = "auto"):
+        dialog = StopDialog(parent=parent, language=language, external=True, mode = mode)
         if dialog.exec_() == QDialog.Accepted:
             return dialog.final_text
         return ""
@@ -143,23 +145,57 @@ class VoiceRecorderApp(QWidget):
 
         self.start_btn = QPushButton("🎤")
         self.start_btn.setFixedHeight(60)
-        self.start_btn.clicked.connect(self.handle_recording)
+
+
+        self.start_btn.clicked.connect(self.get_text)
         layout.addWidget(self.start_btn)
 
-    def handle_recording(self):
+    def get_text(self, lang ="", mode_in = "auto"):
+        if __name__ == '__main__':
+            lang = self.lang_combo.currentData()
+            if self.radio_listen.isChecked():
+                mode = "auto"
+            else:
+                mode = "manual"
+
+        else:
+            mode = mode_in
+            lang = lang
+
+        self.handle_recording(lang, mode)
+
+    def handle_recording(self, lang , mode = "auto"):
         self.text_display.clear()
         self.start_btn.setEnabled(False)
         self.status_label.setText("Recording...")
-        lang = self.lang_combo.currentData()
+
         self.worker = VoiceWorker(language=lang)
         self.worker.text_received.connect(self.text_display.setText, Qt.QueuedConnection)
         self.worker.finished.connect(self.on_finished, Qt.QueuedConnection)
 
-        if self.radio_listen.isChecked():
+        if mode == "auto":
             self.thread = QThread()
             self.worker.moveToThread(self.thread)
             self.thread.started.connect(self.worker.run_automatic)
+
+            self.auto_dialog = StopDialog(self, language=lang, external=False)
+            self.auto_dialog.label.setText("🎙️ Please ask your question...")
+            self.auto_dialog.stop_btn.setText("CANCEL")
+
+            # Close the dialog automatically when the worker finishes
+            self.worker.finished.connect(self.auto_dialog.accept)
+
+
+
+
             self.thread.start()
+            self.auto_dialog.show()  # .show() is non-blocking
+
+
+
+
+
+
         else:
             self.worker.start_manual()
             # external=False means the worker is owned by VoiceRecorderApp

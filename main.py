@@ -197,6 +197,11 @@ def on_search_button_clicked(self, query, directory_path ,force_chat = False):
         # 1. שליחת הבקשה ל-Cloud Run API
 
         if self.gemini_radio.isChecked():
+            if ui_setup.isLTR:
+                query += " please indicate in which documents you found the answer "
+            else:
+                query += " - (פרט היכן מצאת את המידע) "
+
             url = API_search_url
             payload = {
                 "query": query,
@@ -1003,9 +1008,7 @@ class SearchApp(QtWidgets.QWidget):
 
         # 2. Initialize the worker
 
-
-        text = StopDialog.get_voice_text(parent=self, language=lang)
-        #text = StopDialog.get_listen_voice_text(parent=self, language=lang)
+        text = StopDialog.get_voice_text(parent=self, language=lang, mode=ui_setup.Voice_recognition_mode) # manual auto
 
         self.search_input.setText(text)
 
@@ -1031,14 +1034,14 @@ class SearchApp(QtWidgets.QWidget):
         layout = self.both_groups_layout  # Use the class attribute reference
         if self.gemini_radio.isChecked():
             self.search_btn.setText(ui_setup.gemini_radio_str)
-            self.search_input.setPlaceholderText(ui_setup.label_gpt_str)
+            self.label.setText(ui_setup.label_gpt_str)
             self.g_group_widget.setVisible(False)
 
             self.nongemini_radio.setStyleSheet(QRadioButton_STYLE_QSS_green_1515bg)
             self.gemini_radio.setStyleSheet(QRadioButton_STYLE_QSS_green_1520bg)
         else:
             self.search_btn.setText(ui_setup.search_btn_str)
-            self.search_input.setPlaceholderText(ui_setup.label_str)
+            self.label.setText(ui_setup.label_str)
             self.g_group_widget.setVisible(True)
 
             self.nongemini_radio.setStyleSheet(QRadioButton_STYLE_QSS_green_1520bg)
@@ -1123,7 +1126,7 @@ class SearchApp(QtWidgets.QWidget):
     def execute_search(self):
         query = self.search_input.toPlainText().strip()
 
-        if not query or "🎤" in query :
+        if not query:
             return
 
         if self.gemini_radio.isChecked():
@@ -1146,7 +1149,6 @@ class SearchApp(QtWidgets.QWidget):
         for folder in folder_list:
 
             if self.cloud_gemini_radio.isChecked() or (self.non_cloud_gemini_radio.isChecked() and self.gemini_radio.isChecked()):
-
 
                 if not self.sync0 or self.gemini_radio.isChecked():
                     if  self.non_cloud_gemini_radio.isChecked():
