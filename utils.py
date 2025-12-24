@@ -35,6 +35,21 @@ CHECKBOX_STYLE_QSS_gray22 ="""
             border-color: #0056b3;
         }
     """
+
+CHECKBOX_STYLE_QSS_gray22noframe ="""
+        QPushButton, QLabel {
+            background-color: #f0f0f0;
+            color: black;
+            #border: 2px solid #f0f0f0;
+            #border-radius: 4px;
+            padding: 2px 12px;
+        }
+        QPushButton:hover {
+            background-color: #0069d9;
+            border-color: #0056b3;
+        }
+    """
+
 CHECKBOX_STYLE_QSS_black ="""
                     QCheckBox {
                         background-color: black ; /* #f0f0f0 Light gray background for the frame */

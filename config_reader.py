@@ -78,3 +78,5 @@ if CLIENT_PREFIX_TO_STRIP:
 emailsec=read_setup("emailsec")
 Language=read_setup("Language")
 Voice_recognition_mode=read_setup("Voice_recognition_mode")
+hd_cloud_auto_toggle=read_setup("hd_cloud_auto_toggle")
+

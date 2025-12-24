@@ -6,6 +6,7 @@ CLIENT_PREFIX_TO_STRIP=C:/a/מצרפי
 LOCAL_MODE=False
 Language=Englis  # Hebrew
 Voice_recognition_mode=auto # manual auto
+hd_cloud_auto_toggle=True
 email_used=iCloud
 
 

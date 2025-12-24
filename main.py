@@ -996,7 +996,7 @@ class SearchApp(QtWidgets.QWidget):
         else:
             self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_run_rev}")
 
-        self.resize(1700, 1200)
+        self.resize(1800, 1200)
 
 
 
@@ -1148,9 +1148,9 @@ class SearchApp(QtWidgets.QWidget):
 
         for folder in folder_list:
 
-            if self.cloud_gemini_radio.isChecked() or (self.non_cloud_gemini_radio.isChecked() and self.gemini_radio.isChecked()):
+            if self.cloud_gemini_radio.isChecked() or (self.non_cloud_gemini_radio.isChecked() and self.gemini_radio.isChecked() and ui_setup.hd_cloud_auto_toggle == "True"):
 
-                if not self.sync0 or self.gemini_radio.isChecked():
+                if not self.sync0 or self.gemini_radio.isChecked() or ui_setup.hd_cloud_auto_toggle == "False":
                     if  self.non_cloud_gemini_radio.isChecked():
                         self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
                         self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_gray)

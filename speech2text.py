@@ -75,17 +75,26 @@ class StopDialog(QDialog):
         self.final_text = ""
         self.external = external  # Flag to know if we are being called from outside
 
-        self.setWindowTitle("Voice Input Active")
+        if language == "he-IL":
+            WindowTitle="הקלטת קול פעילה"
+            label_str = "🔴 מקליט..."
+            stop_btn_str = "עצור הקלטה"
+        else:
+            WindowTitle="Voice Input Active"
+            label_str = "🔴 Recording..."
+            stop_btn_str = "STOP RECORDING"
+
+        self.setWindowTitle(WindowTitle)
         self.setMinimumSize(400, 250)
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
 
         layout = QVBoxLayout(self)
-        self.label = QLabel("🔴 Recording...")
+        self.label = QLabel(label_str)
         self.label.setAlignment(Qt.AlignCenter)
         self.label.setStyleSheet("font-size: 22px; font-weight: bold; color: #d32f2f;")
         layout.addWidget(self.label)
 
-        self.stop_btn = QPushButton("STOP RECORDING")
+        self.stop_btn = QPushButton(stop_btn_str)
         self.stop_btn.setFixedHeight(80)
         self.stop_btn.setStyleSheet(
             "background-color: #ff4d4d; color: white; font-size: 18px; font-weight: bold; border-radius: 10px;")
@@ -167,7 +176,17 @@ class VoiceRecorderApp(QWidget):
     def handle_recording(self, lang , mode = "auto"):
         self.text_display.clear()
         self.start_btn.setEnabled(False)
-        self.status_label.setText("Recording...")
+
+        if lang == "he-IL":
+            status_label_str = "...מקליט"
+            stop_btn_str = "ביטול"
+            auto_dialog_str = "🎙️ שאל שאלה בבקשה..."
+        else:
+            status_label_str ="Recording..."
+            stop_btn_str = "CANCEL"
+            auto_dialog_str = "🎙️ Please ask your question..."
+
+        self.status_label.setText(status_label_str)
 
         self.worker = VoiceWorker(language=lang)
         self.worker.text_received.connect(self.text_display.setText, Qt.QueuedConnection)
@@ -179,8 +198,8 @@ class VoiceRecorderApp(QWidget):
             self.thread.started.connect(self.worker.run_automatic)
 
             self.auto_dialog = StopDialog(self, language=lang, external=False)
-            self.auto_dialog.label.setText("🎙️ Please ask your question...")
-            self.auto_dialog.stop_btn.setText("CANCEL")
+            self.auto_dialog.label.setText(auto_dialog_str)
+            self.auto_dialog.stop_btn.setText(stop_btn_str)
 
             # Close the dialog automatically when the worker finishes
             self.worker.finished.connect(self.auto_dialog.accept)

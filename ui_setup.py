@@ -1,11 +1,12 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
-from config_reader import LOCAL_MODE, CLIENT_PREFIX_TO_STRIP, Language, Voice_recognition_mode
+from config_reader import LOCAL_MODE, CLIENT_PREFIX_TO_STRIP, Language, Voice_recognition_mode, hd_cloud_auto_toggle
 from utils import (CHECKBOX_STYLE_QSS_black, CHECKBOX_STYLE_QSS_gray, CHECKBOX_STYLE_QSS_blue, CHECKBOX_STYLE_QSS_red, CHECKBOX_STYLE_QSS_green,
                    Container_STYLE_QSS, Radio_STYLE_QSS_green, Radio_STYLE_QSS_red, QRadioButton_STYLE_QSS_green_1515bg,QRadioButton_STYLE_QSS_green_1616bg,
-                   QRadioButton_STYLE_QSS_green_1520bg, CHECKBOX_STYLE_QSS_black22, saveclear_STYLE_QSS, CHECKBOX_STYLE_QSS_gray22)
+                   QRadioButton_STYLE_QSS_green_1520bg, CHECKBOX_STYLE_QSS_black22, saveclear_STYLE_QSS, CHECKBOX_STYLE_QSS_gray22, CHECKBOX_STYLE_QSS_gray22noframe)
 Vertic_Flag = True
 isLTR = Language == "English" # left to right or RTL
 Voice_recognition_mode=Voice_recognition_mode
+hd_cloud_auto_toggle= hd_cloud_auto_toggle
 chat_mode = True
 
 
@@ -28,7 +29,7 @@ if isLTR:
     press_search_btn_str = "⏳ Searching..."
     label_str = "↓ Enter Search Words ↓"
     label_gpt_str = "↓ Enter question for Chat ↓"
-    search_in_str = " Type OR press 🎤 and automatic record "
+    search_in_str = " Type OR press 🎤🔴 and automatic record "
 
     clear_btn_str = "Clear 🗑️"
 
@@ -45,9 +46,9 @@ if isLTR:
     paragraph_str = " Show in paragraphs "
     line_str = " Show in line "
 else:
-    non_sync_cloud_str = "☁️ ענן לא מסונכרן ❌"
-    sync_cloud_str = "☁️ ענן מסונכרן 🔄"
-    non_cloud_str = " 🖴 כונן"
+    non_sync_cloud_str = "☁️ לא מתואם ❌"
+    sync_cloud_str = "☁️ מתואם 🔄"
+    non_cloud_str = " 🖴 כונן "
 
     btn_browse_str = "בחירת תיקיית 📂 חיפוש"
     tik_str = "  📂 תיקיה--->"
@@ -60,7 +61,7 @@ else:
 
     label_str = "↓ הכנסת מילות חיפוש ↓"
     label_gpt_str = "↓ הכנסת שאלה לצ'אט ↓"
-    search_in_str = "הקלדה או לחיצה על 🎤 להקלטה אוטומטית"
+    search_in_str = "הקלדה או לחיצה על 🎤🔴 להקלטה אוטומטית"
 
     clear_btn_str = " ניקוי 🗑️ "
 
@@ -78,17 +79,22 @@ else:
     save_btn_str = "שמירה 💾"
 
 def setup_ui(self):
-    font = QtGui.QFont()
-    font.setPointSize(16)
+    font0 = QtGui.QFont()
+    font0.setPointSize(8)
+    font1 = QtGui.QFont()
+    font1.setPointSize(16)
     font2 = QtGui.QFont()
     font2.setPointSize(24)
+    font3 = QtGui.QFont()
+    font3.setPointSize(32)
+
     layout = QtWidgets.QVBoxLayout(self)
 
 
     # Directory input row
     dir_layout = QtWidgets.QHBoxLayout()
     self.dir_edit = QtWidgets.QLineEdit()
-    self.dir_edit.setFont(font)
+    self.dir_edit.setFont(font1)
     self.dir_edit.setAlignment(dir_edit_alignment_choice)
     self.dir_edit.setLayoutDirection(dir_edit_LayoutDirection)
 
@@ -111,11 +117,11 @@ def setup_ui(self):
             border-color: #0056b3;
         }
     """)
-    btn_browse.setFont(font)
+    btn_browse.setFont(font1)
     btn_browse.clicked.connect(self.browse_directory)
 
     tik = QtWidgets.QLabel(tik_str)
-    tik.setFont(font)
+    tik.setFont(font1)
 
     search_layout = QtWidgets.QHBoxLayout()
 
@@ -126,7 +132,7 @@ def setup_ui(self):
         self.display_root = QtWidgets.QLabel("☁️ Bucket")
         self.display_root.setStyleSheet("color: red;")
 
-    self.display_root.setFont(font)
+    self.display_root.setFont(font1)
 
 
     if isLTR:
@@ -153,7 +159,7 @@ def setup_ui(self):
     self.search_input.setPlaceholderText("Type or speak your search...")
     self.search_input.setMaximumHeight(220)
     self.search_input.setAcceptRichText(False)  # Keeps it as plain text
-    self.search_input.setFont(font)
+    self.search_input.setFont(font1)
     self.search_input.setStyleSheet("background-color: white; color: black; border: 1px solid #ccc;")
 
     self.search_btn = QtWidgets.QPushButton(search_btn_str)
@@ -164,6 +170,7 @@ def setup_ui(self):
     self.search_btn.clicked.connect(self.execute_search)
 
     self.search_container = QtWidgets.QWidget()
+    self.search_container.setFixedWidth(480)
     self.search_container.setStyleSheet("background: transparent; border: none;")
     self.top_row_widget = QtWidgets.QWidget()
     self.top_row_layout = QtWidgets.QHBoxLayout(self.top_row_widget)
@@ -176,18 +183,23 @@ def setup_ui(self):
 
     row_height = 60
     self.label = QtWidgets.QLabel("")
-    self.label.setFont(font)
-    self.label.setStyleSheet(CHECKBOX_STYLE_QSS_gray22)
+    self.label.setFont(font1)
+    self.label.setStyleSheet(CHECKBOX_STYLE_QSS_gray22noframe)
 
-    self.start_btn = QtWidgets.QPushButton("🎤")
-    self.start_btn.setFont(font)
+    self.start_btn = QtWidgets.QPushButton("🔴🎤")
+    self.start_btn.setFont(font1)
     self.start_btn.clicked.connect(self.speech2text_handler)
     self.start_btn.setStyleSheet(CHECKBOX_STYLE_QSS_gray22)
 
     self.label.setFixedHeight(row_height)
     self.start_btn.setFixedHeight(row_height)
+    self.label.setFixedWidth(5*row_height)
+    self.start_btn.setFixedWidth(2*row_height)
+    self.search_input.setFixedWidth(int(8*row_height))
     self.top_row_layout.addWidget(self.label)
+    self.top_row_layout.addSpacing(int(1*row_height))
     self.top_row_layout.addWidget(self.start_btn)
+
     # 4. Assemble the container
     self.container_layout.addWidget(self.top_row_widget)
     self.container_layout.addWidget(self.search_input)
@@ -206,8 +218,6 @@ def setup_ui(self):
 
     self.non_cloud_gemini_radio = QtWidgets.QCheckBox(non_cloud_str)
 
-
-    #self.non_cloud_gemini_radio.toggled.connect(self.handle_radio_check)
 
 
     self.mode_group_cloud = QtWidgets.QButtonGroup()
@@ -252,7 +262,7 @@ def setup_ui(self):
     else:
         self.label.setText(label_gpt_str)
 
-    self.nongemini_radio.setFont(font2)
+    self.nongemini_radio.setFont(font3)
 
 
 
@@ -265,8 +275,8 @@ def setup_ui(self):
         self.nongemini_radio.setStyleSheet(QRadioButton_STYLE_QSS_green_1515bg)
 
 
-    self.gemini_radio.setFont(font2)
-    self.email_push.setFont(font2)
+    self.gemini_radio.setFont(font3)
+    self.email_push.setFont(font1)
     self.email_push.setStyleSheet(QRadioButton_STYLE_QSS_green_1515bg)
     self.email_push.clicked.connect(self.email_search)
     # In your setup_ui, after creating the radio button:
@@ -277,7 +287,7 @@ def setup_ui(self):
     # Create your search mode radio buttons for quick search options
     self.partial_search_radio = QtWidgets.QRadioButton(partial_search_radio_str)
     self.partial_search_radio.setChecked(True)
-    self.partial_search_radio.setFont(font)
+    self.partial_search_radio.setFont(font1)
     self.partial_search_radio.setStyleSheet("""
         QRadioButton::indicator {
             width: 15px;
@@ -293,7 +303,7 @@ def setup_ui(self):
 
 
     self.exact_search_radio = QtWidgets.QRadioButton(exact_search_radio_str)
-    self.exact_search_radio.setFont(font)
+    self.exact_search_radio.setFont(font1)
     self.exact_search_radio.setStyleSheet("""
         QRadioButton::indicator {
             width: 15px;
@@ -308,19 +318,19 @@ def setup_ui(self):
 
     self.all_word_search_radio = QtWidgets.QRadioButton(all_word_search_radio_str)
     self.all_word_search_radio.setChecked(True)
-    self.all_word_search_radio.setFont(font)
+    self.all_word_search_radio.setFont(font1)
     self.all_word_search_radio.setStyleSheet(Radio_STYLE_QSS_red)
 
     self.any_word_search_radio = QtWidgets.QRadioButton(any_word_search_radio_str)
-    self.any_word_search_radio.setFont(font)
+    self.any_word_search_radio.setFont(font1)
     self.any_word_search_radio.setStyleSheet(Radio_STYLE_QSS_red)
 
     self.show_line_mode_radio = QtWidgets.QRadioButton(line_str)
-    self.show_line_mode_radio.setFont(font)
+    self.show_line_mode_radio.setFont(font1)
     self.show_line_mode_radio.setStyleSheet(Radio_STYLE_QSS_green)
 
     self.show_paragraph_mode_radio = QtWidgets.QRadioButton(paragraph_str)
-    self.show_paragraph_mode_radio.setFont(font)
+    self.show_paragraph_mode_radio.setFont(font1)
     self.show_paragraph_mode_radio.setChecked(True)
     self.show_paragraph_mode_radio.setStyleSheet(Radio_STYLE_QSS_green)
     # --- Create two button groups for mutual exclusivity
@@ -390,9 +400,6 @@ def setup_ui(self):
     g12_container.setStyleSheet(Container_STYLE_QSS)
     both_groups_layout = QtWidgets.QHBoxLayout()
 
-    # Second group (Partial / Exact)
-    #g2_layout = QtWidgets.QHBoxLayout()
-
     g1_container = QtWidgets.QWidget()
     g1_container.setStyleSheet(Container_STYLE_QSS)
     g1_layout = QtWidgets.QHBoxLayout(g1_container)
@@ -402,21 +409,21 @@ def setup_ui(self):
 
     self.save_btn = QtWidgets.QPushButton(save_btn_str)
     self.save_btn.setStyleSheet(saveclear_STYLE_QSS)
-    self.save_btn.setFont(font)
+    self.save_btn.setFont(font1)
     self.save_btn.clicked.connect(self.save_all2file)
 
     self.clear_btn = QtWidgets.QPushButton(clear_btn_str)
     self.clear_btn.setStyleSheet(saveclear_STYLE_QSS)
-    self.clear_btn.setFont(font)
+    self.clear_btn.setFont(font1)
     self.clear_btn.clicked.connect(self.clear_all)
 
-    g4_container = QtWidgets.QWidget()
-    g4_container.setStyleSheet(Container_STYLE_QSS)
-    g4_layout = QtWidgets.QVBoxLayout(g4_container)
-    g4_layout.setAlignment(QtCore.Qt.AlignBottom)
-    g4_layout.addWidget(self.clear_btn)
-    g4_layout.addSpacing(small_gap)
-    g4_layout.addWidget(self.save_btn)
+    g_clear_save = QtWidgets.QWidget()
+    g_clear_save.setStyleSheet(Container_STYLE_QSS)
+    g_clear_save_layout = QtWidgets.QVBoxLayout(g_clear_save)
+    g_clear_save_layout.setAlignment(QtCore.Qt.AlignBottom)
+    g_clear_save_layout.addWidget(self.clear_btn)
+    #g_clear_save_layout.addSpacing(small_gap)
+    g_clear_save_layout.addWidget(self.save_btn)
 
     self.g_group_widget = QtWidgets.QWidget()
     self.g_group_widget.setStyleSheet("""
@@ -426,11 +433,12 @@ def setup_ui(self):
         padding: 8px;
     """)
 
-    g5_container = QtWidgets.QWidget()
-    g5_container.setStyleSheet(Container_STYLE_QSS)
-    g5_container.setMaximumHeight(300)
-    g5_layout = QtWidgets.QVBoxLayout(g5_container)
-    g5_layout.addWidget(self.search_container)
+    g_search_chat_email = QtWidgets.QWidget()
+    g_search_chat_email.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Preferred)
+    g_search_chat_email.setStyleSheet(Container_STYLE_QSS)
+    g_search_chat_email.setMaximumHeight(300)
+    g_search_chat_email_layout = QtWidgets.QVBoxLayout(g_search_chat_email)
+    g_search_chat_email_layout.addWidget(self.search_container)
 
     self.e_group_widget = QtWidgets.QWidget()
     self.e_group_widget.setStyleSheet("""
@@ -473,22 +481,12 @@ def setup_ui(self):
 
     if chat_mode:
         self.g_group_widget.setVisible(False)
-    #layout.addLayout(g2_layout)
-    # Create a parent horizontal layout to contain both groups side by side
 
-    both_groups_layout.addWidget(g4_container)
-    both_groups_layout.addSpacing(60)
-    both_groups_layout.addWidget(g5_container)
-
-    both_groups_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
-    self.g1_layout_index = both_groups_layout.count()  # Get the index for the middle widget
-    both_groups_layout.addWidget(self.g_group_widget)
-
+    both_groups_layout.addWidget(g_clear_save)
     both_groups_layout.addStretch()
-    both_groups_layout.addSpacing(gap12)
+    both_groups_layout.addWidget(self.g_group_widget)
     both_groups_layout.addWidget(self.e_group_widget)
-    both_groups_layout.addSpacing(20)
-    both_groups_layout.addWidget(g2_container)
+    both_groups_layout.addWidget(g_search_chat_email)
 
 
     g1_container.setToolTip("איך לחפש, 1 האם כל המילה מופיעה 2 האם רק חלקה ")
@@ -502,9 +500,6 @@ def setup_ui(self):
     g11_container.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
     g12_container.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
 
-    #g1_container.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
-    #g2_container.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
-    #g3_container.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
 
     self.g1_container = g1_container
     self.g3_container = g3_container
@@ -550,7 +545,7 @@ def setup_ui(self):
     self.results_area = QtWidgets.QTextBrowser()
     self.results_area.setOpenLinks(False)
     self.results_area.setReadOnly(True)
-    self.results_area.setFont(font)
+    self.results_area.setFont(font1)
     if isLTR:
         self.results_area.setAlignment(QtCore.Qt.AlignLeft)
         self.results_area.setLayoutDirection(QtCore.Qt.LeftToRight)
@@ -568,7 +563,7 @@ class UIDebugger(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Layout Debugger")
-        self.resize(1400, 800)
+        self.resize(1800, 1200)
 
         # --- Dummy placeholders for functionality ---
         self.load_last_dir = lambda: None
