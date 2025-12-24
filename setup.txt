@@ -3,10 +3,12 @@
 # ... (משתנים אחרים כמו BUCKET_NAME)
 BUCKET_NAME=oren-smart-search-docs-1205
 CLIENT_PREFIX_TO_STRIP=C:/a/מצרפי
-LOCAL_MODE=False
+
+LOCAL_MODE=False  # HD or Cloud
 Language=Englis  # Hebrew
 Voice_recognition_mode=auto # manual auto
 hd_cloud_auto_toggle=True
+
 email_used=iCloud
 
 

@@ -10,9 +10,6 @@ hd_cloud_auto_toggle= hd_cloud_auto_toggle
 chat_mode = True
 
 
-
-
-
 if isLTR:
 
     non_cloud_str = " 🖴 HD"
@@ -79,6 +76,12 @@ else:
     save_btn_str = "שמירה 💾"
 
 def setup_ui(self):
+
+    self.Language = Language
+    self.isLTR = isLTR
+    self.hd_cloud_auto_toggle = hd_cloud_auto_toggle
+    self.Voice_recognition_mode = Voice_recognition_mode
+
     font0 = QtGui.QFont()
     font0.setPointSize(8)
     font1 = QtGui.QFont()

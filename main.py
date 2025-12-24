@@ -7,39 +7,32 @@ from PyQt5 import QtWidgets, QtCore
 from docx import Document
 from PIL import Image
 import re
-import docx2txt
 import ui_setup  # import your setup module
 import win32com.client as win32
 import pdfplumber
 import unicodedata
-from typing import List, Any, Set, Dict
+from typing import List, Dict
 import subprocess
-import ctypes  # <-- NEW: Import ctypes for low-level Windows API call
 from urllib.parse import urlparse, unquote
 import mimetypes
-from dotenv import load_dotenv
 import time
-import shutil
 import threading
 from google import genai
 from google.genai.errors import APIError
 from google.genai import types
-import fitz  # PyMuPDF
 import tempfile
-#import search_core
 from search_core import simple_keyword_search
 from document_parsers import extract_text_and_images_from_pdf
-from config_reader import API_main, BUCKET_NAME, CLIENT_PREFIX_TO_STRIP
+from config_reader import BUCKET_NAME, CLIENT_PREFIX_TO_STRIP
 from gcs_path_browser import GCSBrowserDialog, check_sync
 from email_option_gui import launch_search_dialog
 from email_searcher import EmailSearchWorker, EMAIL_PROVIDERS
 from outlook_searcher import OutlookAPISearcher
-from utils import get_outlook_date
 from gmail_searcher import GmailAPISearcher
 from icloud_searcher import ICloudAPISearcher
 from speech2text import StopDialog
 from utils import QRadioButton_STYLE_QSS_green_1515bg, QRadioButton_STYLE_QSS_green_1520bg, CHECKBOX_STYLE_QSS_green, CHECKBOX_STYLE_QSS_red
-
+from search_utilities import initialize_all_clients
 
 from ui_setup import non_sync_cloud_str, sync_cloud_str
 import pytesseract
@@ -197,7 +190,7 @@ def on_search_button_clicked(self, query, directory_path ,force_chat = False):
         # 1. שליחת הבקשה ל-Cloud Run API
 
         if self.gemini_radio.isChecked():
-            if ui_setup.isLTR:
+            if self.isLTR:
                 query += " please indicate in which documents you found the answer "
             else:
                 query += " - (פרט היכן מצאת את המידע) "
@@ -808,7 +801,7 @@ def pdf_search(self, path, words, mode='any', search_mode='partial', read_from_t
                     # Note: You may need to install 'poppler' utilities for pdfplumber to work with image rendering
                     rgb_image_object = page.to_image(resolution=220).original
                     im = rgb_image_object.convert('L')
-                    if ui_setup.isLTR:
+                    if self.isLTR:
                         ocr_text = pytesseract.image_to_string(im, lang='eng')
                     else:
                         ocr_text = pytesseract.image_to_string(im, lang='heb')
@@ -907,7 +900,7 @@ def pdf_search(self, path, words, mode='any', search_mode='partial', read_from_t
 
 
 
-def docx_search(path, words, mode='any', search_mode='partial'):
+def docx_search(self, path, words, mode='any', search_mode='partial'):
     results = []
     try:
         doc = Document(path)
@@ -948,7 +941,7 @@ def docx_search(path, words, mode='any', search_mode='partial'):
                     # Use Tesseract to convert image to string
                     image = image.convert('L')
 
-                    if ui_setup.isLTR:
+                    if self.isLTR:
                         ocr_text = pytesseract.image_to_string(image, lang='eng')
                     else:
                         ocr_text = pytesseract.image_to_string(image, lang='heb')
@@ -980,11 +973,7 @@ class SearchApp(QtWidgets.QWidget):
         self.thread = None
 
         ui_setup.setup_ui(self)
-        result = check_sync(CLIENT_PREFIX_TO_STRIP+"/גירושין/", BUCKET_NAME, prefix='גירושין')
-        sync0 = result["sync!"]
-        self.sync0 = sync0
-        self.update_gcs_radio()
-
+        '''
         response = requests.get(API_cache_status_url)
         response_str = response.content.decode('utf-8').strip()
         data = json.loads(response_str)
@@ -995,20 +984,26 @@ class SearchApp(QtWidgets.QWidget):
             self.setWindowTitle(f"הדס לוי -  עורך דין - תוכנת חיפוש " + f" Hard Disk")
         else:
             self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_run_rev}")
+        
+        '''
 
         self.resize(1800, 1200)
 
+        result = check_sync(CLIENT_PREFIX_TO_STRIP+"/גירושין/", BUCKET_NAME, prefix='גירושין')
+        sync0 = result["sync!"]
+        self.sync0 = sync0
+        self.update_gcs_radio()
 
 
     def speech2text_handler(self):
         # 1. Determine language and mode from your radio buttons
         # Replace 'radio_manual' with your actual radio button object name
         self.current_voice_result = ""
-        lang = "he-IL" if not ui_setup.isLTR == "Hebrew" else "en-US"
+        lang = "he-IL" if not self.isLTR == "Hebrew" else "en-US"
 
         # 2. Initialize the worker
 
-        text = StopDialog.get_voice_text(parent=self, language=lang, mode=ui_setup.Voice_recognition_mode) # manual auto
+        text = StopDialog.get_voice_text(parent=self, language=lang, mode=self.Voice_recognition_mode) # manual auto
 
         self.search_input.setText(text)
 
@@ -1125,6 +1120,8 @@ class SearchApp(QtWidgets.QWidget):
 
     def execute_search(self):
         query = self.search_input.toPlainText().strip()
+        if not initialize_all_clients():
+            print("LOG: Request failed - Service initialization failed. Check server logs for IAM/API Key errors.")
 
         if not query:
             return
@@ -1148,9 +1145,9 @@ class SearchApp(QtWidgets.QWidget):
 
         for folder in folder_list:
 
-            if self.cloud_gemini_radio.isChecked() or (self.non_cloud_gemini_radio.isChecked() and self.gemini_radio.isChecked() and ui_setup.hd_cloud_auto_toggle == "True"):
+            if self.cloud_gemini_radio.isChecked() or (self.non_cloud_gemini_radio.isChecked() and self.gemini_radio.isChecked() and self.hd_cloud_auto_toggle == "True"):
 
-                if not self.sync0 or self.gemini_radio.isChecked() or ui_setup.hd_cloud_auto_toggle == "False":
+                if not self.sync0 or self.gemini_radio.isChecked() or self.hd_cloud_auto_toggle == "False":
                     if  self.non_cloud_gemini_radio.isChecked():
                         self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
                         self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_gray)
@@ -1268,7 +1265,7 @@ class SearchApp(QtWidgets.QWidget):
                                 display_gemini_result(self, self.results_area, answer, str(path))
 
                             else:
-                                matches = docx_search(path, words, mode, search_mode)
+                                matches = docx_search(self, path, words, mode, search_mode)
 
                                 for paragraph in matches:
                                     self.append_result(path, paragraph, words)

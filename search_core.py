@@ -235,9 +235,6 @@ def perform_search(query: str, directory_path: str = ""):
 
 app = Flask(__name__)
 
-if not initialize_all_clients():
-    print("LOG: Request failed - Service initialization failed. Check server logs for IAM/API Key errors.")
-
 timer0 = time.time()
 @app.route('/cache_status', methods=['GET'])
 def get_cache_status():

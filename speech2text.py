@@ -22,13 +22,16 @@ class VoiceWorker(QObject):
         with self.microphone as source:
             try:
                 # How long to wait for the user to start speaking
-                self.recognizer.pause_threshold = 1  # Increase this if words are cut off (default is 0.8)
+                self.recognizer.pause_threshold = 1.5  # Increase this if words are cut off (default is 0.8)
 
                 # This is crucial: it prevents cutting off the last word if you pause slightly
-                self.recognizer.phrase_threshold = 0.3
+                self.recognizer.phrase_threshold = 0.6
 
                 # This handles the silence at the end
                 self.recognizer.non_speaking_duration = 1
+
+                # Dynamic adjustment helps in changing environments
+                self.recognizer.dynamic_energy_threshold = True
 
                 self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
                 audio = self.recognizer.listen(source, timeout=10)
@@ -77,11 +80,19 @@ class StopDialog(QDialog):
 
         if language == "he-IL":
             WindowTitle="הקלטת קול פעילה"
-            label_str = "🔴 מקליט..."
+            if external:
+                label_str = "🔴 הקלטה... [הפסקה אוטומטית]  "
+            else:
+                label_str = "🔴 מקליט..."
+
             stop_btn_str = "עצור הקלטה"
         else:
             WindowTitle="Voice Input Active"
-            label_str = "🔴 Recording..."
+            if external:
+                label_str = "🔴 Recording ... with automatic STOP"
+            else:
+                label_str = "🔴 Recording..."
+
             stop_btn_str = "STOP RECORDING"
 
         self.setWindowTitle(WindowTitle)
@@ -94,15 +105,16 @@ class StopDialog(QDialog):
         self.label.setStyleSheet("font-size: 22px; font-weight: bold; color: #d32f2f;")
         layout.addWidget(self.label)
 
-        self.stop_btn = QPushButton(stop_btn_str)
-        self.stop_btn.setFixedHeight(80)
-        self.stop_btn.setStyleSheet(
-            "background-color: #ff4d4d; color: white; font-size: 18px; font-weight: bold; border-radius: 10px;")
-        layout.addWidget(self.stop_btn)
+        if not external:
+            self.stop_btn = QPushButton(stop_btn_str)
+            self.stop_btn.setFixedHeight(80)
+            self.stop_btn.setStyleSheet(
+                "background-color: #ff4d4d; color: white; font-size: 18px; font-weight: bold; border-radius: 10px;")
+            layout.addWidget(self.stop_btn)
 
         if self.external:
             # Called from get_voice_text: Dialog handles its own worker
-            self.stop_btn.clicked.connect(self.process_and_wait)
+            #self.stop_btn.clicked.connect(self.process_and_wait)
             self.worker = VoiceWorker(language=self.language, mode = self.mode)
             self.worker.text_received.connect(self.handle_result)
             self.worker.start_manual()
