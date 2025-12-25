@@ -79,30 +79,34 @@ class StopDialog(QDialog):
         self.external = external  # Flag to know if we are being called from outside
 
         if language == "he-IL":
-            WindowTitle="הקלטת קול פעילה"
+
             if external:
                 label_str = "🔴 הקלטה... [הפסקה אוטומטית]  "
+                WindowTitle = " !     דברו בקול רם וברור     ! "
             else:
                 label_str = "🔴 מקליט..."
+                WindowTitle = "        הקלטת קול פעילה       "
 
             stop_btn_str = "עצור הקלטה"
         else:
-            WindowTitle="Voice Input Active"
+
             if external:
-                label_str = "🔴 Recording ... with automatic STOP"
+                WindowTitle = " !    Speak load and clear    !"
+                label_str = "🔴 Recording ...  with automatic STOP"
             else:
                 label_str = "🔴 Recording..."
+                WindowTitle = "Voice Input Active"
 
             stop_btn_str = "STOP RECORDING"
 
         self.setWindowTitle(WindowTitle)
-        self.setMinimumSize(400, 250)
+        self.setMinimumSize(500, 300)
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
 
         layout = QVBoxLayout(self)
         self.label = QLabel(label_str)
         self.label.setAlignment(Qt.AlignCenter)
-        self.label.setStyleSheet("font-size: 22px; font-weight: bold; color: #d32f2f;")
+        self.label.setStyleSheet("font-size: 30px; font-weight: bold; color: #d32f2f;")
         layout.addWidget(self.label)
 
         if not external:

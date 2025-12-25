@@ -24,7 +24,7 @@ if isLTR:
     dir_edit_LayoutDirection = QtCore.Qt.LayoutDirection.LeftToRight
     search_btn_str = "! Start Search !"
     press_search_btn_str = "⏳ Searching..."
-    label_str = "↓ Enter Search Words ↓"
+    label_str     = "↓ Enter Search Words ↓"
     label_gpt_str = "↓ Enter question for Chat ↓"
     search_in_str = " Type OR press 🎤🔴 and automatic record "
 
@@ -56,8 +56,8 @@ else:
     press_search_btn_str = "...⏳ מבצע חיפוש"
 
 
-    label_str = "↓ הכנסת מילות חיפוש ↓"
-    label_gpt_str = "↓ הכנסת שאלה לצ'אט ↓"
+    label_str =     "↓ הכנסת מילות חיפוש ↓"
+    label_gpt_str = "↓ הכנסת שאלה לצ'אט  ↓"
     search_in_str = "הקלדה או לחיצה על 🎤🔴 להקלטה אוטומטית"
 
     clear_btn_str = " ניקוי 🗑️ "
@@ -172,8 +172,10 @@ def setup_ui(self):
     self.search_btn.setFont(font2)
     self.search_btn.clicked.connect(self.execute_search)
 
+    row_height = 60
+
     self.search_container = QtWidgets.QWidget()
-    self.search_container.setFixedWidth(480)
+    self.search_container.setFixedWidth(9*row_height)
     self.search_container.setStyleSheet("background: transparent; border: none;")
     self.top_row_widget = QtWidgets.QWidget()
     self.top_row_layout = QtWidgets.QHBoxLayout(self.top_row_widget)
@@ -184,7 +186,7 @@ def setup_ui(self):
     self.container_layout.setContentsMargins(0, 0, 0, 0)
     #self.container_layout.setSpacing(5)
 
-    row_height = 60
+
     self.label = QtWidgets.QLabel("")
     self.label.setFont(font1)
     self.label.setStyleSheet(CHECKBOX_STYLE_QSS_gray22noframe)
@@ -196,11 +198,12 @@ def setup_ui(self):
 
     self.label.setFixedHeight(row_height)
     self.start_btn.setFixedHeight(row_height)
-    self.label.setFixedWidth(5*row_height)
+    self.label.setFixedWidth(6*row_height)
     self.start_btn.setFixedWidth(2*row_height)
-    self.search_input.setFixedWidth(int(8*row_height))
+    self.search_input.setFixedWidth(9*row_height)
+
     self.top_row_layout.addWidget(self.label)
-    self.top_row_layout.addSpacing(int(1*row_height))
+    self.top_row_layout.addSpacing(row_height)
     self.top_row_layout.addWidget(self.start_btn)
 
     # 4. Assemble the container
