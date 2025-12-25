@@ -33,7 +33,6 @@ from icloud_searcher import ICloudAPISearcher
 from speech2text import StopDialog
 from utils import QRadioButton_STYLE_QSS_green_1515bg, QRadioButton_STYLE_QSS_green_1520bg, CHECKBOX_STYLE_QSS_green, CHECKBOX_STYLE_QSS_red
 from search_utilities import initialize_all_clients
-
 from ui_setup import non_sync_cloud_str, sync_cloud_str
 import pytesseract
 from utils import CHECKBOX_STYLE_QSS_black, CHECKBOX_STYLE_QSS_gray, Container_STYLE_QSSgray, Container_STYLE_QSS
@@ -999,7 +998,7 @@ class SearchApp(QtWidgets.QWidget):
         # 1. Determine language and mode from your radio buttons
         # Replace 'radio_manual' with your actual radio button object name
         self.current_voice_result = ""
-        lang = "he-IL" if not self.isLTR == "Hebrew" else "en-US"
+        lang = "he-IL" if self.Language == "Hebrew" else "en-US"
 
         # 2. Initialize the worker
 
@@ -1147,7 +1146,7 @@ class SearchApp(QtWidgets.QWidget):
 
             if self.cloud_gemini_radio.isChecked() or (self.non_cloud_gemini_radio.isChecked() and self.gemini_radio.isChecked() and self.hd_cloud_auto_toggle == "True"):
 
-                if not self.sync0 or self.gemini_radio.isChecked() or self.hd_cloud_auto_toggle == "False":
+                if not self.sync0 or self.gemini_radio.isChecked() or not self.hd_cloud_auto_toggle:
                     if  self.non_cloud_gemini_radio.isChecked():
                         self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
                         self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_gray)

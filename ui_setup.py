@@ -3,10 +3,12 @@ from config_reader import LOCAL_MODE, CLIENT_PREFIX_TO_STRIP, Language, Voice_re
 from utils import (CHECKBOX_STYLE_QSS_black, CHECKBOX_STYLE_QSS_gray, CHECKBOX_STYLE_QSS_blue, CHECKBOX_STYLE_QSS_red, CHECKBOX_STYLE_QSS_green,
                    Container_STYLE_QSS, Radio_STYLE_QSS_green, Radio_STYLE_QSS_red, QRadioButton_STYLE_QSS_green_1515bg,QRadioButton_STYLE_QSS_green_1616bg,
                    QRadioButton_STYLE_QSS_green_1520bg, CHECKBOX_STYLE_QSS_black22, saveclear_STYLE_QSS, CHECKBOX_STYLE_QSS_gray22, CHECKBOX_STYLE_QSS_gray22noframe)
+import hidden_setup
+
 Vertic_Flag = True
-isLTR = Language == "English" # left to right or RTL
+isLTR = not (Language == "Hebrew") # left to right or RTL
 Voice_recognition_mode=Voice_recognition_mode
-hd_cloud_auto_toggle= hd_cloud_auto_toggle
+hd_cloud_auto_toggle= hd_cloud_auto_toggle == "True"
 chat_mode = True
 
 
@@ -79,7 +81,7 @@ def setup_ui(self):
 
     self.Language = Language
     self.isLTR = isLTR
-    self.hd_cloud_auto_toggle = hd_cloud_auto_toggle
+    self.hd_cloud_auto_toggle = hd_cloud_auto_toggle == "True"
     self.Voice_recognition_mode = Voice_recognition_mode
 
     font0 = QtGui.QFont()
@@ -101,8 +103,10 @@ def setup_ui(self):
     self.dir_edit.setAlignment(dir_edit_alignment_choice)
     self.dir_edit.setLayoutDirection(dir_edit_LayoutDirection)
 
-
-
+    self.setup_btn = QtWidgets.QPushButton("⚙")
+    self.setup_btn.setFixedWidth(40)
+    self.setup_btn.clicked.connect(lambda: hidden_setup.handle_setup_dialog(self))
+    #self.top_row_layout.addWidget(self.setup_btn)
 
     self.load_last_dir()
 
@@ -144,10 +148,11 @@ def setup_ui(self):
         dir_layout.addWidget(self.dir_edit)
         dir_layout.addWidget(self.display_root)
         dir_layout.addSpacing(200)
+        dir_layout.addWidget(self.setup_btn)
 
 
     else:
-
+        dir_layout.addWidget(self.setup_btn)
         dir_layout.addSpacing(200)
         dir_layout.addWidget(self.display_root)
         dir_layout.addWidget(self.dir_edit)
@@ -581,6 +586,8 @@ class UIDebugger(QtWidgets.QWidget):
 
         self.email_search = lambda: print("Email Search clicked")
         self.update_search_button_text = lambda: None
+        self.hidden_setup = lambda: None
+
         self.save_all2file = lambda: print("Save clicked")
         self.clear_all = lambda: self.results_area.clear()
 
