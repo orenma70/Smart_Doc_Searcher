@@ -10,14 +10,14 @@ isLTR = not (Language == "Hebrew") # left to right or RTL
 Voice_recognition_mode=Voice_recognition_mode
 hd_cloud_auto_toggle= hd_cloud_auto_toggle == "True"
 chat_mode = True
-
+update_app_title = False
 
 if isLTR:
 
     non_cloud_str = " 🖴 HD"
 
-    non_sync_cloud_str = "☁️ Cloud non synchronized ❌"
-    sync_cloud_str = "☁️  Cloud synchronized 🔄"
+    non_sync_cloud_str = "☁️ Cloud ❌"
+    sync_cloud_str = "☁️ Cloud 🔄"
 
 
     btn_browse_str = "Choose Search Folder"
@@ -45,8 +45,8 @@ if isLTR:
     paragraph_str = " Show in paragraphs "
     line_str = " Show in line "
 else:
-    non_sync_cloud_str = "☁️ לא מתואם ❌"
-    sync_cloud_str = "☁️ מתואם 🔄"
+    non_sync_cloud_str = "☁️ ענן ❌"
+    sync_cloud_str = "☁️ ענן 🔄"
     non_cloud_str = " 🖴 כונן "
 
     btn_browse_str = "בחירת תיקיית 📂 חיפוש"
@@ -83,7 +83,7 @@ def setup_ui(self):
     self.isLTR = isLTR
     self.hd_cloud_auto_toggle = hd_cloud_auto_toggle == "True"
     self.Voice_recognition_mode = Voice_recognition_mode
-
+    self.update_app_title = update_app_title
     font0 = QtGui.QFont()
     font0.setPointSize(8)
     font1 = QtGui.QFont()

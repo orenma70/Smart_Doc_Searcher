@@ -9,6 +9,24 @@ import time
 import hashlib
 import binascii, base64
 from ui_setup import isLTR
+from PyQt5.QtWidgets import QMessageBox
+
+
+def upload_to_bucket(bucket, local_folder, filename, prefix=""):
+    local_path = os.path.join(local_folder, filename)
+    if prefix and not prefix.endswith('/'):
+        gcs_path = f"{prefix}/{filename}"
+    else:
+        gcs_path = f"{prefix}{filename}"
+
+    blob = bucket.blob(gcs_path)
+
+    # 1. Disable "smart" content-type guessing
+    # 2. Upload as a raw stream to ensure MD5 matches the HD perfectly
+    blob.content_type = 'application/octet-stream'
+
+    #with open(local_path, "rb") as f:
+    blob.upload_from_filename(local_path)
 
 def md5_of_file(path):
     """Compute MD5 checksum of a local file."""
@@ -48,13 +66,44 @@ def check_sync(local_path, bucket_name, prefix=""):
     # Compare sets
     missing_in_gcs = set(local_files) - set(gcs_files)
     missing_locally = set(gcs_files) - set(local_files)
-    mismatched = [f for f in local_files if f in gcs_files and local_files[f] != gcs_files[f]]
-    sync1 = not mismatched and not missing_locally and not missing_in_gcs
+    #mismatched = [f for f in local_files if f in gcs_files and local_files[f] != gcs_files[f]]
+
+    # Use a regular for loop for clarity
+    mismatched_files = []  # Track mismatches for the return dict
+
+    for filename in local_files:
+        if filename in gcs_files:
+            if local_files[filename] != gcs_files[filename]:
+                mismatched_files.append(filename)  # Keep track of the mismatch
+
+                # 1. Create the Pop-up Box
+                msg = QMessageBox()
+                msg.setIcon(QMessageBox.Question)
+                # Ensure text direction follows your LTR setting
+                msg.setLayoutDirection(QtCore.Qt.LeftToRight if isLTR else QtCore.Qt.RightToLeft)
+
+                msg.setWindowTitle("Sync Mismatch" if isLTR else "אי התאמה בסנכרון")
+                msg.setText(f"File changed: {filename}" if isLTR else f"קובץ השתנה: {filename}")
+                msg.setInformativeText("Upload to bucket?" if isLTR else "להעלות לענן?")
+                msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+
+                # 2. Handle the User's Choice
+                if msg.exec_() == QMessageBox.Ok:
+                    # 3. Call the updated function with the bucket object
+                    upload_to_bucket(bucket, local_path, filename, prefix)
+
+                    success_msg = QMessageBox()
+                    success_msg.setText("Upload successful!" if isLTR else "העלאה הצליחה!")
+                    success_msg.exec_()
+                else:
+                    print(f"Upload cancelled for {filename}")
+
+    sync1 = not missing_locally and not missing_in_gcs and not mismatched_files
 
     return {
         "missing_in_gcs": missing_in_gcs,
         "missing_locally": missing_locally,
-        "mismatched": mismatched,
+        "mismatched": mismatched_files,  # Now correctly populated
         "sync!": sync1
     }
 

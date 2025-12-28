@@ -972,19 +972,20 @@ class SearchApp(QtWidgets.QWidget):
         self.thread = None
 
         ui_setup.setup_ui(self)
-        '''
-        response = requests.get(API_cache_status_url)
-        response_str = response.content.decode('utf-8').strip()
-        data = json.loads(response_str)
-        self.cloud_run_rev=data["REVISION"]
+        if self.update_app_title:
+            self.setWindowTitle(self.update_app_title)
+            response = requests.get(API_cache_status_url)
+            response_str = response.content.decode('utf-8').strip()
+            data = json.loads(response_str)
+            self.cloud_run_rev=data["REVISION"]
 
 
-        if not self.cloud_gemini_radio.isChecked():
-            self.setWindowTitle(f"הדס לוי -  עורך דין - תוכנת חיפוש " + f" Hard Disk")
-        else:
-            self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_run_rev}")
-        
-        '''
+            if not self.cloud_gemini_radio.isChecked():
+                self.setWindowTitle(f"הדס לוי -  עורך דין - תוכנת חיפוש " + f" Hard Disk")
+            else:
+                self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_run_rev}")
+
+
 
         self.resize(1800, 1200)
 
@@ -1653,7 +1654,8 @@ class SearchApp(QtWidgets.QWidget):
             else:
                 self.display_root.setStyleSheet("color: red; background-color: lightblue;")
 
-            self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_run_rev}")
+            if self.update_app_title:
+                self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_run_rev}")
 
             self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
             self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_gray)
