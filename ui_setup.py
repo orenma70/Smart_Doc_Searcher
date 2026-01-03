@@ -1,5 +1,5 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
-from config_reader import LOCAL_MODE, CLIENT_PREFIX_TO_STRIP, Language, Voice_recognition_mode, hd_cloud_auto_toggle
+from config_reader import LOCAL_MODE, CLIENT_PREFIX_TO_STRIP, Language, Voice_recognition_mode, hd_cloud_auto_toggle, cloud_storage_provider
 from utils import (CHECKBOX_STYLE_QSS_black, CHECKBOX_STYLE_QSS_gray, CHECKBOX_STYLE_QSS_blue, CHECKBOX_STYLE_QSS_red, CHECKBOX_STYLE_QSS_green,
                    Container_STYLE_QSS, Radio_STYLE_QSS_green, Radio_STYLE_QSS_red, QRadioButton_STYLE_QSS_green_1515bg,QRadioButton_STYLE_QSS_green_1616bg,
                    QRadioButton_STYLE_QSS_green_1520bg, CHECKBOX_STYLE_QSS_black22, saveclear_STYLE_QSS, CHECKBOX_STYLE_QSS_gray22, CHECKBOX_STYLE_QSS_gray22noframe)
@@ -10,7 +10,7 @@ isLTR = not (Language == "Hebrew") # left to right or RTL
 Voice_recognition_mode=Voice_recognition_mode
 hd_cloud_auto_toggle= hd_cloud_auto_toggle == "True"
 chat_mode = True
-update_app_title = False
+update_app_title = True
 
 if isLTR:
 
@@ -83,6 +83,8 @@ def setup_ui(self):
     self.isLTR = isLTR
     self.hd_cloud_auto_toggle = hd_cloud_auto_toggle == "True"
     self.Voice_recognition_mode = Voice_recognition_mode
+    self.cloud_storage_provider =cloud_storage_provider
+
     self.update_app_title = update_app_title
     font0 = QtGui.QFont()
     font0.setPointSize(8)

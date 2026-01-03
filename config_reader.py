@@ -79,4 +79,4 @@ emailsec=read_setup("emailsec")
 Language=read_setup("Language")
 Voice_recognition_mode=read_setup("Voice_recognition_mode")
 hd_cloud_auto_toggle=read_setup("hd_cloud_auto_toggle")
-
+cloud_storage_provider=read_setup("cloud_storage_provider")

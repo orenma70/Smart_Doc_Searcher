@@ -1,4 +1,4 @@
-import sys
+import sys, boto3
 import email.utils
 import os, io
 import json
@@ -23,7 +23,6 @@ from google.genai import types
 import tempfile
 from search_core import simple_keyword_search
 from document_parsers import extract_text_and_images_from_pdf
-from config_reader import BUCKET_NAME, CLIENT_PREFIX_TO_STRIP
 from gcs_path_browser import GCSBrowserDialog, check_sync
 from email_option_gui import launch_search_dialog
 from email_searcher import EmailSearchWorker, EMAIL_PROVIDERS
@@ -64,7 +63,7 @@ LATIN_LETTER_PATTERN = re.compile(r'[a-zA-Z]')
 sequence_pattern = re.compile(r'\d+')
 LATIN_LETTER_PATTERNnNum = re.compile(r'[a-zA-Z]+|\d+')
 
-from config_reader import API_search_url, API_simple_search_url, API_cache_status_url, CLIENT_PREFIX_TO_STRIP
+from config_reader import BUCKET_NAME, API_search_url, API_simple_search_url, API_cache_status_url, CLIENT_PREFIX_TO_STRIP
 
 
 
@@ -193,12 +192,45 @@ def on_search_button_clicked(self, query, directory_path ,force_chat = False):
                 query += " please indicate in which documents you found the answer "
             else:
                 query += " - (פרט היכן מצאת את המידע) "
+            if self.cloud_storage_provider == "Google":
+                url = API_search_url
+                payload = {
+                    "query": query,
+                    "directory_path": directory_path
+                }
+            elif self.cloud_storage_provider == "Amazon":
+                AWS_REGION = "ap-southeast-2"
+                KB_ID = "SEL4HSGWF3"
+                # 1. Connect to AWS
+                session = boto3.Session(
+                    aws_access_key_id=os.environ.get("AWS_ACCESS_KEY"),
+                    aws_secret_access_key=os.environ.get("AWS_SECRET_KEY"),
+                    region_name=AWS_REGION
+                )
 
-            url = API_search_url
-            payload = {
-                "query": query,
-                "directory_path": directory_path
-            }
+                # 2. Use the 'bedrock-agent-runtime' client for Knowledge Bases
+                client = session.client('bedrock-agent-runtime')
+
+                # 3. Ask the AI to search S3 and generate an answer
+
+                response = client.retrieve_and_generate(
+                    input={'text': query},
+                    retrieveAndGenerateConfiguration={
+                        'type': 'KNOWLEDGE_BASE',
+                        'knowledgeBaseConfiguration': {
+                            'knowledgeBaseId': KB_ID,
+                            'modelArn': f'arn:aws:bedrock:{AWS_REGION}::foundation-model/anthropic.claude-3-5-sonnet-20241022-v2:0',
+                            'retrievalConfiguration': {
+                                'vectorSearchConfiguration': {
+                                    'numberOfResults': 10,  # Search 10 chunks instead of 5
+                            #        'overrideSearchType': 'HYBRID'  # Uses Keywords + Meaning
+                                }
+                            }
+                        }
+                    }
+                )
+
+                return response['output']['text']
         else:
             url = API_simple_search_url
             if self.all_word_search_radio.isChecked():
@@ -973,7 +1005,6 @@ class SearchApp(QtWidgets.QWidget):
 
         ui_setup.setup_ui(self)
         if self.update_app_title:
-            self.setWindowTitle(self.update_app_title)
             response = requests.get(API_cache_status_url)
             response_str = response.content.decode('utf-8').strip()
             data = json.loads(response_str)
@@ -983,9 +1014,12 @@ class SearchApp(QtWidgets.QWidget):
             if not self.cloud_gemini_radio.isChecked():
                 self.setWindowTitle(f"הדס לוי -  עורך דין - תוכנת חיפוש " + f" Hard Disk")
             else:
-                self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_run_rev}")
-
-
+                if self.cloud_storage_provider == "Google":
+                    self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_run_rev} -  {self.cloud_storage_provider} ")
+                elif self.cloud_storage_provider == "Amazon":
+                    self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_storage_provider}")
+                else:
+                    self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_storage_provider}")
 
         self.resize(1800, 1200)
 
@@ -1120,8 +1154,9 @@ class SearchApp(QtWidgets.QWidget):
 
     def execute_search(self):
         query = self.search_input.toPlainText().strip()
-        if not initialize_all_clients():
-            print("LOG: Request failed - Service initialization failed. Check server logs for IAM/API Key errors.")
+        if self.cloud_storage_provider == "Google":
+            if not initialize_all_clients():
+                print("LOG: Request failed - Service initialization failed. Check server logs for IAM/API Key errors.")
 
         if not query:
             return
