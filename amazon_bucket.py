@@ -6,11 +6,19 @@ from botocore.exceptions import ClientError
 # ==========================================
 # CONFIGURATION - FILL THESE IN
 # ==========================================
+'''
 AWS_ACCESS_KEY = os.environ.get("amazon_key")
 AWS_SECRET_KEY = os.environ.get("amazon_secret")
 AWS_REGION = "eu-north-1"
 BUCKET_NAME = "oren-smart-search-docs-amazon" #"arn:aws:s3:::oren-smart-search-docs-amazon"
 KMS_KEY_ARN = "arn:aws:kms:eu-north-1:983426483678:key/68eda003-f0dc-43b5-9cde-ab3431257456"
+'''
+
+AWS_ACCESS_KEY = os.environ.get("AWS_ACCESS_KEY")
+AWS_SECRET_KEY = os.environ.get("AWS_SECRET_KEY")
+BUCKET_NAME = "oren-smart-search-docs-amazon2"
+AWS_REGION = "ap-southeast-2"
+KMS_KEY_ARN = "arn:aws:kms:ap-southeast-2:038715112888:key/82ae7f3a-eb41-4f29-bd2c-85b9ab573023"
 
 # ==========================================
 # S3 CLIENT INITIALIZATION

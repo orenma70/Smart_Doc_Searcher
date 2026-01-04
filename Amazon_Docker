@@ -18,8 +18,8 @@ WORKDIR /app
 
 # 3. Copy requirements and install
 # Ensure boto3 is inside your requirements.txt!
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY amazon_requirements.txt
+RUN pip install --no-cache-dir -r amazon_requirements.txt
 
 # 4. Copy your application files
 COPY amazon_setup.txt .

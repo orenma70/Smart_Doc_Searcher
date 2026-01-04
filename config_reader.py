@@ -37,8 +37,8 @@ email_used=read_setup("email_used")
 email_str=read_setup(email_used+"_address")
 
 
-BUCKET_NAME=read_setup("BUCKET_NAME")
-GCS_OCR_OUTPUT_PATH = "gs://" + BUCKET_NAME + "/vision_ocr_output/"
+
+
 
 API_main=read_setup("API_main")
 API_search_url = API_main + read_setup("API_search_url")
@@ -80,3 +80,10 @@ Language=read_setup("Language")
 Voice_recognition_mode=read_setup("Voice_recognition_mode")
 hd_cloud_auto_toggle=read_setup("hd_cloud_auto_toggle")
 cloud_storage_provider=read_setup("cloud_storage_provider")
+
+if cloud_storage_provider == "Amazon":
+    BUCKET_NAME=read_setup("BUCKET_NAME_Amazon")
+elif cloud_storage_provider == "Google":
+    BUCKET_NAME=read_setup("BUCKET_NAME_Google")
+
+GCS_OCR_OUTPUT_PATH = "gs://" + BUCKET_NAME + "/vision_ocr_output/"
