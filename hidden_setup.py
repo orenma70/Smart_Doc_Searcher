@@ -25,10 +25,16 @@ class SetupDialog(QtWidgets.QDialog):
 
         # isLTR Toggle
         self.ltr_check = QtWidgets.QCheckBox("Enable LTR Mode")
-        self.ltr_check.setChecked(not current_lang == "Hebrew")
+        is_not_hebrew = current_lang != "Hebrew"
+        self.ltr_check.setChecked(is_not_hebrew)
 
         # Cloud Auto Toggle
-        self.cloud_check = QtWidgets.QCheckBox("Auto-Sync Cloud (GCS)")
+        self.cloud_provider = QtWidgets.QComboBox()
+        self.cloud_provider.addItems(["Google", "Amazon"])
+        current_provider = getattr(self.parent_app, 'cloud_storage_provider', 'Google')
+        self.cloud_provider.setCurrentText("Google" if current_provider == "Google" else "Amazon")
+
+        self.cloud_check = QtWidgets.QCheckBox("Auto-Sync Cloud")
         self.cloud_check.setChecked(getattr(self.parent_app, 'hd_cloud_auto_toggle', True))
 
         # Voice Mode Selection
@@ -39,6 +45,7 @@ class SetupDialog(QtWidgets.QDialog):
         # --- Add to Form ---
         form_layout.addRow("Language:", self.lang_cb)
         form_layout.addRow("Layout Direction:", self.ltr_check)
+        form_layout.addRow("Cloud Provider:", self.cloud_provider)
         form_layout.addRow("Cloud Sync:", self.cloud_check)
         form_layout.addRow("Voice Mode:", self.voice_cb)
         layout.addLayout(form_layout)
@@ -53,9 +60,12 @@ class SetupDialog(QtWidgets.QDialog):
 
     def get_results(self):
         """Returns a dictionary of the UI state."""
+        a = self.ltr_check.isChecked()
+
         return {
-            "Language": "he-IL" if self.lang_cb.currentText() == "Hebrew" else "en-US",
+            "Language": "Hebrew" if self.lang_cb.currentText() == "Hebrew" else "English",
             "isLTR": self.ltr_check.isChecked(),
+            "cloud_storage_provider": self.cloud_provider.currentText(),
             "hd_cloud_auto_toggle": self.cloud_check.isChecked(),
             "Voice_recognition_mode": self.voice_cb.currentText()
         }
@@ -79,9 +89,17 @@ def handle_setup_dialog(parent_app):
             parent_app.isLTR = results["isLTR"]
             parent_app.hd_cloud_auto_toggle = results["hd_cloud_auto_toggle"]
             parent_app.Voice_recognition_mode = results["Voice_recognition_mode"]
-
+            if parent_app.cloud_storage_provider != results["cloud_storage_provider"]:
+                parent_app.cloud_storage_provider = results["cloud_storage_provider"]
+                if parent_app.cloud_storage_provider == "Google":
+                    parent_app.setWindowTitle(
+                        f"  הדס לוי -  עורך דין - תוכנת חיפוש  {parent_app.cloud_run_rev} -  {parent_app.cloud_storage_provider} ")
+                elif parent_app.cloud_storage_provider == "Amazon":
+                    parent_app.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {parent_app.cloud_storage_provider}")
+                else:
+                    parent_app.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {parent_app.cloud_storage_provider}")
             # 4. Immediate UI Update (Direction)
-            direction = QtCore.Qt.LeftToRight if parent_app.isLTR else QtCore.Qt.RightToLeft
+            direction = QtCore.Qt.LeftToRight if not parent_app.isLTR else QtCore.Qt.RightToLeft
             parent_app.setLayoutDirection(direction)
 
             # 5. Persistent Save

@@ -85,5 +85,7 @@ if cloud_storage_provider == "Amazon":
     BUCKET_NAME=read_setup("BUCKET_NAME_Amazon")
 elif cloud_storage_provider == "Google":
     BUCKET_NAME=read_setup("BUCKET_NAME_Google")
+else:
+    BUCKET_NAME=""
 
 GCS_OCR_OUTPUT_PATH = "gs://" + BUCKET_NAME + "/vision_ocr_output/"

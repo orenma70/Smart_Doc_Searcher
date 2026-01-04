@@ -232,7 +232,7 @@ def on_search_button_clicked(self, query, directory_path ,force_chat = False):
 
                 return response['output']['text']
         else:
-            url = API_simple_search_url
+
             if self.all_word_search_radio.isChecked():
                 str2_mode = "all"
             else:
@@ -266,11 +266,15 @@ def on_search_button_clicked(self, query, directory_path ,force_chat = False):
             formatted_output = format_simple_search_results(results_data)
             return formatted_output
         else:
-            response = requests.post(
-                url,
-                json=payload,
-                headers={'Content-Type': 'application/json'}
-            )
+            if self.cloud_storage_provider == "Google":
+                url = API_simple_search_url
+                response = requests.post(
+                    url,
+                    json=payload,
+                    headers={'Content-Type': 'application/json'}
+                )
+            elif self.cloud_storage_provider == "Amazon":
+                a = 0
         # --- 2. מדידת זמן: התחלה ---
 
         end_time = time.time()
@@ -996,8 +1000,19 @@ def docx_search(self, path, words, mode='any', search_mode='partial'):
 
 
 
-
 class SearchApp(QtWidgets.QWidget):
+    def set_window_title(self):
+        if not self.cloud_gemini_radio.isChecked():
+            self.setWindowTitle(f"הדס לוי -  עורך דין - תוכנת חיפוש " + f" Hard Disk")
+        else:
+            if self.cloud_storage_provider == "Google":
+                self.setWindowTitle(
+                    f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_run_rev} -  {self.cloud_storage_provider} ")
+            elif self.cloud_storage_provider == "Amazon":
+                self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_storage_provider}")
+            else:
+                self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_storage_provider}")
+
     def __init__(self):
         super().__init__()
         self.email_worker = None
@@ -1010,16 +1025,8 @@ class SearchApp(QtWidgets.QWidget):
             data = json.loads(response_str)
             self.cloud_run_rev=data["REVISION"]
 
+            self.set_window_title()
 
-            if not self.cloud_gemini_radio.isChecked():
-                self.setWindowTitle(f"הדס לוי -  עורך דין - תוכנת חיפוש " + f" Hard Disk")
-            else:
-                if self.cloud_storage_provider == "Google":
-                    self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_run_rev} -  {self.cloud_storage_provider} ")
-                elif self.cloud_storage_provider == "Amazon":
-                    self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_storage_provider}")
-                else:
-                    self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_storage_provider}")
 
         self.resize(1800, 1200)
 
@@ -1690,7 +1697,7 @@ class SearchApp(QtWidgets.QWidget):
                 self.display_root.setStyleSheet("color: red; background-color: lightblue;")
 
             if self.update_app_title:
-                self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_run_rev}")
+                self.set_window_title()
 
             self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
             self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_gray)
