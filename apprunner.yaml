@@ -1,5 +1,5 @@
 version: 1.0
-runtime: buildpack
+runtime: generic
 build:
   dockerfile: Dockerfile_amazon
 run:
