@@ -34,6 +34,7 @@ from utils import QRadioButton_STYLE_QSS_green_1515bg, QRadioButton_STYLE_QSS_gr
 from search_utilities import initialize_all_clients
 from ui_setup import non_sync_cloud_str, sync_cloud_str
 import pytesseract
+from amazon_bucket import search_with_s3_select
 from utils import CHECKBOX_STYLE_QSS_black, CHECKBOX_STYLE_QSS_gray, Container_STYLE_QSSgray, Container_STYLE_QSS
 pytesseract.pytesseract.tesseract_cmd = r'C:\\Program Files\Tesseract-OCR\tesseract.exe'
 
@@ -266,15 +267,12 @@ def on_search_button_clicked(self, query, directory_path ,force_chat = False):
             formatted_output = format_simple_search_results(results_data)
             return formatted_output
         else:
-            if self.cloud_storage_provider == "Google":
-                url = API_simple_search_url
-                response = requests.post(
-                    url,
-                    json=payload,
-                    headers={'Content-Type': 'application/json'}
-                )
-            elif self.cloud_storage_provider == "Amazon":
-                a = 0
+
+            response = requests.post(
+                    url = API_simple_search_url,
+                json=payload,
+                headers={'Content-Type': 'application/json'}
+            )
         # --- 2. מדידת זמן: התחלה ---
 
         end_time = time.time()

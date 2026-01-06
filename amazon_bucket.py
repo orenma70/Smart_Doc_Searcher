@@ -30,7 +30,17 @@ s3_client = boto3.client(
     region_name=AWS_REGION
 )
 
-
+# Example of searching INSIDE an S3 file without a server
+def search_with_s3_select(bucket, key, word):
+    response = s3_client.select_object_content(
+        Bucket=bucket,
+        Key=key,
+        ExpressionType='SQL',
+        Expression=f"SELECT * FROM s3object s WHERE s._1 LIKE '%{word}%'",
+        InputSerialization={'CSV': {"FileHeaderInfo": "NONE"}},
+        OutputSerialization={'JSON': {}},
+    )
+    # S3 returns ONLY the lines that match the word!
 # ==========================================
 # HELPER FUNCTIONS
 # ==========================================

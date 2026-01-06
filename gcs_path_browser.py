@@ -3,15 +3,18 @@ from google.cloud import storage
 from typing import List, Dict, Any, Optional, Union
 # We assume PyQt5 is used based on QFileDialog in browse_directory
 from PyQt5 import QtWidgets, QtCore, QtGui
-from config_reader import  BUCKET_NAME
 from search_utilities import get_storage_client
 import time
 import hashlib
 import binascii, base64
 from ui_setup import isLTR
 from PyQt5.QtWidgets import QMessageBox
-from config_reader import cloud_storage_provider
+from config_reader import cloud_storage_provider,BUCKET_NAME
 import boto3  # Make sure to pip install boto3
+import pdfplumber
+import pytesseract
+
+from pdf2image import convert_from_path
 from botocore.exceptions import ClientError
 #arn:aws:iam::038715112888:user/Admin
 # Add a flag to your config or class
@@ -115,6 +118,50 @@ def get_local_hashes(file_path):
 
 
 
+
+
+def get_ocr_text_from_pdf(pdf_path):
+    """
+    Extracts text from PDF.
+    Uses structured text first, falls back to OCR if the page looks like a scan.
+    """
+    full_text = []
+
+    # Configure Tesseract path if not in System PATH
+    # pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            for pnum, page in enumerate(pdf.pages, start=1):
+                # 1. Try Structured Extraction
+                text = page.extract_text() or ""
+
+                # 2. Check if we need OCR (if text is sparse/empty)
+                if len(text.strip()) < 50:
+                    print(f"Page {pnum}: Scanned image detected. Running OCR...")
+
+                    # Use pdfplumber's built-in renderer (avoids convert_from_path crash)
+                    # resolution=300 is 'Legal Quality'
+                    img = page.to_image(resolution=300).original
+                    img = img.convert('L')  # Grayscale helps OCR accuracy
+
+                    # Use 'heb_rashi' if that's your mode, otherwise 'heb+eng'
+                    if isLTR:
+                        page_text = pytesseract.image_to_string(img, lang='eng')
+                    else:
+                        raw_ocr = pytesseract.image_to_string(img, lang='heb')
+                        page_text = "\n".join([line[::-1] for line in raw_ocr.split('\n')])
+                else:
+                    page_text = "\n".join([line[::-1] for line in text.split('\n')])
+
+                full_text.append(page_text)
+
+        return "\n".join(full_text)
+
+    except Exception as e:
+        print(f"Error processing PDF: {e}")
+        return ""
+
 def upload_to_cloud(local_folder, filename, prefix=""):
     """Securely uploads to the active cloud."""
     local_path = os.path.join(local_folder, filename)
@@ -131,6 +178,21 @@ def upload_to_cloud(local_folder, filename, prefix=""):
                 'Metadata': {'md5-hash': hex_md5}
             }
         )
+        '''
+        text_content = get_ocr_text_from_pdf(local_path)
+        base_name = os.path.splitext(filename)[0]
+        index_key = f".index/{base_name}.txt"
+
+        s3_client.put_object(
+            Body=text_content.encode('utf-8'),
+            Bucket=BUCKET_NAME,
+            Key=index_key,
+            ContentType='text/plain; charset=utf-8',
+            Metadata={'original-pdf': filename}  # Link back to the PDF
+        )
+        '''
+
+
     else:
         # Existing GCS Upload logic
         client = get_storage_client()

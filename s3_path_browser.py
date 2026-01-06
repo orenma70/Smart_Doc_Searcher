@@ -5,6 +5,8 @@ import binascii, base64
 from typing import List, Dict, Any, Optional
 from PyQt5 import QtWidgets, QtCore
 from PyQt5.QtWidgets import QMessageBox
+import pytesseract
+from pdf2image import convert_from_path
 
 # Assuming these are imported from your project
 # from ui_setup import isLTR
@@ -39,6 +41,19 @@ def get_local_md5_hex(file_path):
     return hash_md5.hexdigest()
 
 
+def get_ocr_text_from_pdf(pdf_path):
+    # Convert PDF pages to images
+    pages = convert_from_path(pdf_path, 300)  # 300 DPI for legal quality
+    full_text = ""
+
+    for page in pages:
+        # Perform OCR on each page
+        text = pytesseract.image_to_string(page, lang='heb+eng')  # Supports Hebrew & English
+        full_text += text
+
+    return full_text
+
+
 def upload_file_secure(local_path, s3_key):
     """Standalone upload with KMS and Metadata MD5."""
     local_md5 = get_local_md5_hex(local_path)
@@ -53,6 +68,17 @@ def upload_file_secure(local_path, s3_key):
                 'Metadata': {'md5-hash': local_md5}
             }
         )
+        text_content = get_ocr_text_from_pdf(local_path)
+        index_key = f".index/{s3_key}.txt"
+
+        s3_client.put_object(
+            Body=text_content.encode('utf-8'),
+            Bucket=BUCKET_NAME,
+            Key=index_key,
+            ContentType='text/plain; charset=utf-8',
+            Metadata={'original-pdf': s3_key}  # Link back to the PDF
+        )
+
         return True
     except Exception as e:
         print(f"Upload error: {e}")
@@ -97,7 +123,7 @@ def check_sync(local_path, bucket_name, prefix=""):
     mismatched_files = []
 
     for filename, l_hash in local_files.items():
-        if filename in s3_files and s3_files[filename] != l_hash:
+        if filename in s3_files and s3_files[filename] == l_hash:
             mismatched_files.append(filename)
 
             # Popup logic
@@ -110,6 +136,11 @@ def check_sync(local_path, bucket_name, prefix=""):
             if msg.exec_() == QMessageBox.Ok:
                 s3_target_key = (prefix + filename).replace("//", "/")
                 if upload_file_secure(os.path.join(local_path, filename), s3_target_key):
+
+
+
+
+
                     QMessageBox.information(None, "Success", "Upload successful!")
 
     is_synced = not missing_in_s3 and not missing_locally and not mismatched_files
