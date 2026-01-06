@@ -1,6 +1,10 @@
 version: 1.0
 runtime: generic
 build:
+  commands:
+    build:
+      - echo "Starting Docker build..."
   dockerfile: Dockerfile_amazon
 run:
+  runtime-version: 1.0
   port: 8080
