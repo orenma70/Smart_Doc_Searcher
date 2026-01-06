@@ -1,0 +1,6 @@
+version: 1.0
+runtime: buildpack
+build:
+  dockerfile: Dockerfile_amazon
+run:
+  port: 8080
