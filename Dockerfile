@@ -25,7 +25,7 @@ COPY amazon_requirements.txt .
 RUN pip install --no-cache-dir -r amazon_requirements.txt
 
 # 4. Copy your application files
-COPY amazon_setup.txt .
+COPY setup.txt .
 COPY amazon_search_core.py .
 COPY config_reader.py .
 COPY document_parsers.py .
@@ -33,4 +33,4 @@ COPY amazon_search_utilities.py .
 
 # 5. Start Gunicorn
 # We use gthread to handle concurrent requests better in a container
-CMD ["gunicorn", "--bind", "0.0.0.0:80", "--workers", "1", "--threads", "8", "--timeout", "120", "amazon_search_core:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "8", "--timeout", "120", "amazon_search_core:app"]

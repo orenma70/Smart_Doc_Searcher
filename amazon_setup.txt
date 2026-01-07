@@ -1,0 +1,50 @@
+
+
+# ... (משתנים אחרים כמו BUCKET_NAME) 
+cloud_storage_provider=Amazon # Amazon Google
+
+BUCKET_NAME_Amazon=oren-smart-search-docs-amazon2
+BUCKET_NAME_Google=oren-smart-search-docs-1205
+
+#KMS_KEY_ARN=arn:aws:s3:::oren-smart-search-docs-amazon
+#AWS_Region=eu-north-1  983426483678 SmartSearch Jm2006
+
+
+# s3 #2
+#  arn:aws:kms:ap-southeast-2:038715112888:key/82ae7f3a-eb41-4f29-bd2c-85b9ab573023
+#  arn:aws:kms:ap-southeast-2:038715112888:key/dedeef37-68d5-4bc4-bf2a-aab88c1e7a17
+
+# AWS : Admin https://038715112888.signin.aws.amazon.com/console
+# arn:aws:iam::038715112888:user/Admin
+# AKIAQSA4ZXW4GOJLRWMB  0ZF1B...
+CLIENT_PREFIX_TO_STRIP=C:/a/מצרפי
+
+LOCAL_MODE=False  # HD or Cloud
+Language=Hebrew  # Hebrew English
+Voice_recognition_mode=auto # manual auto
+hd_cloud_auto_toggle=True
+
+email_used=iCloud
+
+
+
+
+
+
+
+
+
+#++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+emailsec=Jmjmjm2004
+Walla_address=orenma70@walla.co.il
+Gmail_address=orenma@gmail.com
+Outlook_address=orenma70@outlook.com   #Jm2005
+iCloud_address=ornma70@iCloud.com
+
+# כתובות ה-API של Cloud Run 
+API_main=https://smart-doc-searcher-api-v15-359127107055.us-central1.run.app/
+
+API_search_url=search
+API_simple_search_url=https://bgqyxb9ztm.ap-southeast-2.awsapprunner.com/	
+API_start_cache_url=start_cache
+API_cache_status_url=cache_status

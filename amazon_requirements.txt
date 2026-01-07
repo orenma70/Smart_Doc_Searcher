@@ -1,10 +1,6 @@
-# gcloud run deploy smart-doc-searcher-api-v12 --source . --region us-central1 --allow-unauthenticated 
-#--timeout 300 --cpu-throttling --max-instances 10 --concurrency 1 --set-env-vars=GEMINI_API_KEY=AIza3333
-     
+  
 Flask==3.0.3
 gunicorn==22.0.0
-google-genai==0.1.0
-google-cloud-storage==2.16.0
 pdfminer.six
 python-docx==1.1.0
 google-cloud-vision==3.7.2
@@ -12,3 +8,6 @@ pypdf
 Pillow==10.2.0
 PyMuPDF
 pytesseract
+fastapi
+uvicorn
+boto3
