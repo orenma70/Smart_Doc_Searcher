@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     libc-dev \
     libffi-dev \
     tesseract-ocr \
+    tesseract-ocr-heb \
     tesseract-ocr-eng \
     libgl1-mesa-glx \
     && rm -rf /var/lib/apt/lists/*
@@ -32,4 +33,4 @@ COPY amazon_search_utilities.py .
 
 # 5. Start Gunicorn
 # We use gthread to handle concurrent requests better in a container
-CMD exec gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120 amazon_search_core:app
+CMD ["gunicorn", "--bind", "0.0.0.0:80", "--workers", "1", "--threads", "8", "--timeout", "120", "amazon_search_core:app"]

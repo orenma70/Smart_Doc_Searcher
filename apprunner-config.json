@@ -1,0 +1,12 @@
+{
+  "RuntimeConfiguration": {
+    "Port": "80",
+    "Cpu": "1 vCPU",
+    "Memory": "2 GB"
+  },
+  "NetworkConfiguration": {
+    "EgressConfiguration": {
+      "EgressType": "DEFAULT"
+    }
+  }
+}	

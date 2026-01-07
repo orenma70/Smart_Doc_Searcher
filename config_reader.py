@@ -37,14 +37,25 @@ email_used=read_setup("email_used")
 email_str=read_setup(email_used+"_address")
 
 
+cloud_storage_provider=read_setup("cloud_storage_provider")
+
+
+if cloud_storage_provider == "Amazon":
+    API_main = read_setup("API_main_amazon")
+    API_simple_search_url = API_main + read_setup("API_simple_search_url")
+    API_main = read_setup("API_main_google")
+    API_search_url = API_main + read_setup("API_search_url")
+    API_start_cache_url = API_main + read_setup("API_start_cache_url")
+    API_cache_status_url = API_main + read_setup("API_cache_status_url")
+else:
+    API_main = read_setup("API_main_google")
+    API_simple_search_url = API_main + read_setup("API_simple_search_url")
+    API_search_url = API_main + read_setup("API_search_url")
+    API_start_cache_url = API_main + read_setup("API_start_cache_url")
+    API_cache_status_url = API_main + read_setup("API_cache_status_url")
 
 
 
-API_main=read_setup("API_main")
-API_search_url = API_main + read_setup("API_search_url")
-API_simple_search_url = API_main + read_setup("API_simple_search_url")
-API_start_cache_url = API_main + read_setup("API_start_cache_url")
-API_cache_status_url = API_main + read_setup("API_cache_status_url")
 
 CLIENT_PREFIX_TO_STRIP=read_setup("CLIENT_PREFIX_TO_STRIP")
 LOCAL_MODE=read_setup("LOCAL_MODE")
@@ -79,7 +90,7 @@ emailsec=read_setup("emailsec")
 Language=read_setup("Language")
 Voice_recognition_mode=read_setup("Voice_recognition_mode")
 hd_cloud_auto_toggle=read_setup("hd_cloud_auto_toggle")
-cloud_storage_provider=read_setup("cloud_storage_provider")
+
 
 if cloud_storage_provider == "Amazon":
     BUCKET_NAME=read_setup("BUCKET_NAME_Amazon")

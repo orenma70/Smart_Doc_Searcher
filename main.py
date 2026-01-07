@@ -269,7 +269,7 @@ def on_search_button_clicked(self, query, directory_path ,force_chat = False):
         else:
 
             response = requests.post(
-                    url = API_simple_search_url,
+                url = API_simple_search_url,
                 json=payload,
                 headers={'Content-Type': 'application/json'}
             )
