@@ -1,3 +1,9 @@
+# aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin 038715112888.dkr.ecr.ap-southeast-2.amazonaws.com
+# passwors lost rerun this
+
+
+aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin 038715112888.dkr.ecr.ap-southeast-2.amazonaws.com
+
 # Variables
 $ECR_URL = "038715112888.dkr.ecr.ap-southeast-2.amazonaws.com/smart-doc-api:latest"
 $SERVICE_ARN = "arn:aws:apprunner:ap-southeast-2:038715112888:service/smart-doc-searcher-api-final/5abc7f51e3a04885bf68e15c4980927f"
@@ -23,16 +29,24 @@ $sourceConfig = @"
 "@
 
 # שליחת הפקודה
-aws apprunner update-service --service-arn $SERVICE_ARN --source-configuration $sourceConfig
+#aws apprunner update-service --service-arn $SERVICE_ARN --source-configuration $sourceConfig
 
 Write-Host "--- 4. Monitoring Deployment ---" -ForegroundColor Cyan
+$total_sec = 0
+$sec_int = 10
+
 while ($true) {
     $status = aws apprunner describe-service --service-arn $SERVICE_ARN --query "Service.Status" --output text
-    Write-Host "Current Status: $status"
+    
+    # הדפסת סטטוס עם זמן מצטבר
+    Write-Host "Current Status: $status (Elapsed: ${total_sec}s)" -ForegroundColor Cyan
     
     if ($status -eq "RUNNING") {
-        Write-Host "AWS reports RUNNING. Waiting 30s for traffic routing..." -ForegroundColor Yellow
-        Start-Sleep -Seconds 30
+        Write-Host "--- Deployment Successful! ---" -ForegroundColor Green
+        Write-Host "Total Time: ${total_sec} seconds"
+        
+        Write-Host "Waiting 10s for traffic routing..." -ForegroundColor Yellow
+        Start-Sleep -Seconds 10
         
         $url = aws apprunner describe-service --service-arn $SERVICE_ARN --query "Service.ServiceUrl" --output text
         $fullUrl = "https://$url"
@@ -40,11 +54,12 @@ while ($true) {
         Write-Host "Opening: $fullUrl" -ForegroundColor Green
         Start-Process $fullUrl
         break
-    } elseif ($status -contains "ROLLBACK") {
-        Write-Host "Deployment Failed. Check AWS Logs." -ForegroundColor Red
+    } elseif ($status -match "FAILED" -or $status -match "ROLLBACK") {
+        Write-Host "Deployment Failed after ${total_sec}s. Check AWS Console Logs." -ForegroundColor Red
         break
     }
-    Start-Sleep -Seconds 15
-}
 
+    Start-Sleep -Seconds $sec_int
+    $total_sec += $sec_int
+}
 Write-Host "Done! Wait a few minutes for the status to become RUNNING." -ForegroundColor Green

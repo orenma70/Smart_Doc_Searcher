@@ -36,6 +36,9 @@ from ui_setup import non_sync_cloud_str, sync_cloud_str
 import pytesseract
 from amazon_bucket import search_with_s3_select
 from utils import CHECKBOX_STYLE_QSS_black, CHECKBOX_STYLE_QSS_gray, Container_STYLE_QSSgray, Container_STYLE_QSS
+
+
+
 pytesseract.pytesseract.tesseract_cmd = r'C:\\Program Files\Tesseract-OCR\tesseract.exe'
 
 chat_gpt = False

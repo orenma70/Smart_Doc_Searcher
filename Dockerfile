@@ -13,6 +13,12 @@ RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     tesseract-ocr-heb \
     tesseract-ocr-eng \
+    libtesseract-dev \
+    libwmf-dev \
+    libpng-dev \
+    libjpeg-dev \
+    libtiff-dev \
+    libgl1 \
     libgl1-mesa-glx \
     && rm -rf /var/lib/apt/lists/*
 

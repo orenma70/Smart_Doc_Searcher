@@ -11,3 +11,4 @@ pytesseract
 fastapi
 uvicorn
 boto3
+pdf2image
