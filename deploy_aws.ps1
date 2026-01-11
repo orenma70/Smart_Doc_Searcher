@@ -1,6 +1,7 @@
 # aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin 038715112888.dkr.ecr.ap-southeast-2.amazonaws.com
 # passwors lost rerun this
 
+Write-Host "--- 0. login  ---" -ForegroundColor Cyan
 
 aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin 038715112888.dkr.ecr.ap-southeast-2.amazonaws.com
 

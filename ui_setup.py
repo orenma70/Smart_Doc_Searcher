@@ -9,7 +9,7 @@ Vertic_Flag = True
 isLTR = not (Language == "Hebrew") # left to right or RTL
 Voice_recognition_mode=Voice_recognition_mode
 hd_cloud_auto_toggle= hd_cloud_auto_toggle == "True"
-chat_mode = True
+chat_mode = False
 update_app_title = True
 
 if isLTR:

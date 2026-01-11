@@ -10,6 +10,8 @@ from docx import Document
 #   from PyPDF2 import PdfReader
 import pypdf
 from PIL import Image # Used to handle the image object
+import json
+from config_reader import CLIENT_PREFIX_TO_STRIP
 
 def find_paragraph_position_in_pages(paragraph_text: str, pages):
     """
@@ -383,6 +385,99 @@ def convert_pdf_page_to_image(pdf_path: str, page_number: int, poppler_path: str
             doc.close()
 
 
+def paragraph_matches(text, words, mode='any', search_mode='partial'):
+    # text_lower = text.lower()
+    text_lower = text
+    if search_mode == 'full':
+        # Match only whole words
+        found = 0
+        for w in words:
+            pattern = r'\b{}\b'.format(re.escape(w.lower()))
+            if re.search(pattern, text_lower):
+                found += 1
+
+        return (mode == 'all' and found == len(words)) or (mode != 'all' and found > 0)
+    else:
+        # substring match
+        if mode == 'all':
+            return all(w.lower() in text_lower for w in words)
+        else:
+            return any(w.lower() in text_lower for w in words)
+
+
+def search_in_json_content(path, pages_list, words, mode, search_mode):
+    results = []
+
+    # כאן pages_list הוא כבר ה-List שהתקבל מה-json_data.get("pages")
+    for p_idx, page_data in enumerate(pages_list):
+        # מחלצים את מספר העמוד ואת השורות מתוך האיבר הנוכחי ברשימה
+        pnum = page_data.get("page_number", p_idx + 1)
+        lines = page_data.get("lines", [])
+        l = len(lines)
+
+        i = 0
+        while i < l:
+            ln = lines[i]
+
+            # 1. בדיקה מהירה של השורה הנוכחית
+            if paragraph_matches(ln, words, mode, search_mode):
+
+                # 2. בניית קונטקסט (שורה לפני ושורה אחרי)
+                start_index = max(0, i - 1)
+                end_index = min(i + 2, l)
+
+                context_lines = lines[start_index:end_index]
+                context_text = " ".join(context_lines)
+
+                # 3. בדיקה מלאה על הקונטקסט
+                if paragraph_matches(context_text, words, mode, search_mode):
+                    pre = f"<span style='color:blue;'>— עמוד {pnum} — שורות {start_index + 1}-{end_index}</span>"
+                    path_for_url = path.replace('\\', '/')
+                    file_url_with_page = f"filepage:///{path_for_url}?page={pnum}"
+                    open_link = f"<a href='{file_url_with_page}' style='color:green; text-decoration: none;'>[פתח קובץ]</a>"
+
+                    full_paragraph = (
+                            " ".join([path]) + "  " +
+                            pre + " " + open_link + "<br><br>" +
+                            "<br>".join(context_lines).replace(".₪", "₪.").replace(",₪", "₪,") + "<br>"
+                    )
+
+                    results.append(full_paragraph)
+                    i += 2  # דילוג כדי למנוע כפילויות של אותה פסקה
+            i += 1
+
+    return results
+
+def get_json_index_path(pdf_path, base_folder=""):
+    # 1. ניקוי לוכסנים לנתיב אחיד של Windows
+    pdf_path = os.path.normpath(pdf_path)
+    base_folder = os.path.normpath(base_folder)
+
+    # 2. חילוץ הנתיב היחסי (למשל: "גירושין\2021\fitz.pdf")
+    relative_path = os.path.relpath(pdf_path, base_folder)
+
+    # 3. הפרדת השם מהתיקיות
+    rel_dir, filename = os.path.split(relative_path)
+    base_name = os.path.splitext(filename)[0]
+
+    # 4. בנייה מחדש תחת תיקיית .index בשורש
+    # תוצאה: C:\a\מצרפי \ .index \ גירושין\2021 \ fitz.json
+    json_path = os.path.join(base_folder, ".index", rel_dir, f"{base_name}.json")
+
+    return os.path.normpath(json_path)
+
+
+# --- שימוש בתוך הפונקציה שלך ---
+def get_json_index_if_exists(pdf_path):
+    json_path = get_json_index_path(pdf_path,CLIENT_PREFIX_TO_STRIP)
+
+    if os.path.exists(json_path):
+        print(f"📖 Loading local index from: {json_path}")
+        with open(json_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+
+    print(f"⚠️ No local index found at: {json_path}")
+    return None
 
 def extract_text_and_images_from_pdf(pdf_path: str) -> tuple[str, list]:
     """

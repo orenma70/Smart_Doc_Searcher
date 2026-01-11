@@ -22,7 +22,7 @@ from google.genai.errors import APIError
 from google.genai import types
 import tempfile
 from search_core import simple_keyword_search
-from document_parsers import extract_text_and_images_from_pdf
+from document_parsers import extract_text_and_images_from_pdf, get_json_index_if_exists, search_in_json_content, paragraph_matches
 from gcs_path_browser import GCSBrowserDialog, check_sync
 from email_option_gui import launch_search_dialog
 from email_searcher import EmailSearchWorker, EMAIL_PROVIDERS
@@ -714,25 +714,6 @@ def fix_hebrew_reversal(text):
     return " ".join(surgically_corrected_words)
 
 
-def paragraph_matches(text, words, mode='any', search_mode='partial'):
-    # text_lower = text.lower()
-    text_lower = text
-    if search_mode == 'full':
-        # Match only whole words
-        found = 0
-        for w in words:
-            pattern = r'\b{}\b'.format(re.escape(w.lower()))
-            if re.search(pattern, text_lower):
-                found += 1
-
-        return (mode == 'all' and found == len(words)) or (mode != 'all' and found > 0)
-    else:
-        # substring match
-        if mode == 'all':
-            return all(w.lower() in text_lower for w in words)
-        else:
-            return any(w.lower() in text_lower for w in words)
-
 
 def replace_with_bold(text, regex):
     # Use QRegExp to find matches and replace with <b> tags
@@ -1331,8 +1312,14 @@ class SearchApp(QtWidgets.QWidget):
 
 
                             else:
-                                pdf_text, image_list = extract_text_and_images_from_pdf(str(path))
-                                matches = pdf_search(self, path, words, mode, search_mode)
+                                #pdf_text, image_list = extract_text_and_images_from_pdf(str(path))
+                                json_data = get_json_index_if_exists(path)
+
+                                if json_data:
+                                    # שולחים לחיפוש עם הנתונים מהאינדקס
+                                    matches = search_in_json_content(path, json_data.get("pages", []), words, mode, search_mode)
+                                else:
+                                    matches = pdf_search(self, path, words, mode, search_mode)
 
                             # matches2 = pdf_search_flags(path, words, search_mode)
 

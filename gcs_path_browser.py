@@ -12,12 +12,14 @@ from PyQt5.QtWidgets import QMessageBox
 from config_reader import cloud_storage_provider,BUCKET_NAME
 import boto3  # Make sure to pip install boto3
 import pdfplumber
+import io, re
+import fitz  # PyMuPDF
 import pytesseract
+from PIL import Image
+from docx import Document
+import json
+from config_reader import CLIENT_PREFIX_TO_STRIP
 
-from pdf2image import convert_from_path
-from botocore.exceptions import ClientError
-#arn:aws:iam::038715112888:user/Admin
-# Add a flag to your config or class
 USE_AWS = cloud_storage_provider == "Amazon"  # Your existing flag
 # Set your flag here based on your environment
 
@@ -29,6 +31,205 @@ s3_client: Any = None
 KMS_KEY_ARN = "arn:aws:kms:ap-southeast-2:038715112888:key/82ae7f3a-eb41-4f29-bd2c-85b9ab573023"
 
 
+def delete_from_cloud_with_index(filename, prefix="", use_aws=True):
+    """
+    מוחק מהענן (AWS או GCS) את הקובץ המקורי ואת האינדקס שלו
+    """
+    # 1. הגדרת הנתיבים (זהים לשני העננים)
+    target_key = f"{prefix}/{filename}".replace("//", "/").strip("/")
+    base_name = os.path.splitext(filename)[0]
+    index_key = f".index/{prefix}/{base_name}.json".replace("//", "/").strip("/")
+
+    try:
+        if use_aws:
+            # --- מחיקה מ-AWS S3 ---
+            client = get_s3_client()
+
+            # מחיקה של שני האובייקטים בבת אחת (יעיל יותר)
+            client.delete_objects(
+                Bucket=BUCKET_NAME,
+                Delete={
+                    'Objects': [
+                        {'Key': target_key},
+                        {'Key': index_key}
+                    ],
+                    'Quiet': True
+                }
+            )
+            print(f"🗑️ AWS: Deleted {target_key} and its index.")
+
+        else:
+            # --- מחיקה מ-Google Cloud Storage ---
+            global gcs_client
+            if gcs_client is None:
+                gcs_client = get_storage_client()
+            bucket = gcs_client.bucket(BUCKET_NAME)
+
+            # ב-GCS מוחקים כל אובייקט בנפרד
+            blob = bucket.blob(target_key)
+            if blob.exists():
+                blob.delete()
+
+            index_blob = bucket.blob(index_key)
+            if index_blob.exists():
+                index_blob.delete()
+
+            print(f"🗑️ GCS: Deleted {target_key} and its index.")
+
+        return True
+
+    except Exception as e:
+        print(f"❌ Error during cloud deletion of {filename}: {e}")
+        return False
+
+
+def extract_text_for_indexing(file_bytes, file_ext):
+    used_ocr = False
+    file_ext = file_ext.lower()
+    pages_data = []  # נשמור כאן רשימת אובייקטים של עמודים
+
+    try:
+        if file_ext == '.pdf':
+            pages_data = []
+            used_ocr = False
+            fitz_flag = False  # שנה ל-False כדי לבדוק את pdfplumber
+
+            # פתרון לבעיית ה-with: נפתח את הקובץ לפי הפלאג
+            if fitz_flag:
+                doc_context = fitz.open(stream=file_bytes, filetype="pdf")
+                pages_iterator = doc_context
+            else:
+                doc_context = pdfplumber.open(io.BytesIO(file_bytes))
+                pages_iterator = doc_context.pages
+
+            with doc_context as doc:
+                for p_num_zero, page in enumerate(pages_iterator):
+                    p_num = p_num_zero + 1  # מספור עמודים אנושי (1, 2, 3...)
+
+                    # 1. חילוץ טקסט ראשוני
+                    if fitz_flag:
+                        current_text = page.get_text().strip()
+                    else:
+                        current_text = page.extract_text() or ""
+
+                    # 2. בדיקה אם צריך OCR
+                    if len(current_text.strip()) < 100:
+                        print(f"Page {p_num}: Running OCR...")
+                        used_ocr = True
+
+                        if fitz_flag:
+                            # שימוש ב-Fitz לרנדור תמונה
+                            pix = page.get_pixmap(matrix=fitz.Matrix(3, 3))
+                            img = Image.open(io.BytesIO(pix.tobytes("png"))).convert('L')
+                        else:
+                            # שימוש ב-pdfplumber לרנדור תמונה
+                            img = page.to_image(resolution=220).original
+                            img = img.convert('L')
+
+                        # הרצת ה-OCR
+                        lang = 'eng' if isLTR else 'heb'
+                        page_text = pytesseract.image_to_string(img, lang=lang)
+                    else:
+                        # אם הטקסט חולץ בהצלחה ללא OCR
+                        page_text = current_text
+
+                    # 3. שמירת הנתונים ל-JSON
+                    if page_text.strip():
+                        lines = [l.strip() for l in page_text.split('\n') if l.strip()]
+                        pages_data.append({"page": p_num, "lines": lines})
+
+
+        elif file_ext == '.docx':
+            doc = Document(io.BytesIO(file_bytes))
+            # ב-DOCX נתייחס להכל כעמוד 1 או נחלק לפי פסקאות
+            text_lines = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+            if text_lines:
+                pages_data.append({"page": 1, "lines": text_lines})
+
+            # OCR לתמונות בתוך ה-DOCX
+            current_page = 2
+            for rel in doc.part.rels.values():
+                if "image" in rel.target_ref:
+                    try:
+                        img = Image.open(io.BytesIO(rel.target_part.blob))
+                        ocr_text = pytesseract.image_to_string(img.convert('L'), lang='heb+eng')
+                        if ocr_text.strip():
+                            pages_data.append({
+                                "page": current_page,
+                                "lines": [l.strip() for l in ocr_text.split('\n') if l.strip()]
+                            })
+                            current_page += 1
+                            used_ocr = True
+                    except:
+                        continue
+
+    except Exception as e:
+        print(f"ERROR in extraction: {e}")
+        return [], False
+
+    return pages_data, used_ocr
+
+
+def upload_to_cloud(local_folder, filename, base_folder, use_aws=True):
+    # נרמול נתיבים
+    local_folder = os.path.normpath(local_folder)
+    base_folder = os.path.normpath(base_folder)
+    pdf_path = os.path.join(local_folder, filename)
+
+    # חילוץ נתיבים יחסיים
+    relative_dir = os.path.relpath(local_folder, base_folder).replace("\\", "/")
+    relative_file_path = f"{relative_dir}/{filename}".replace("//", "/")
+
+    base_name = os.path.splitext(filename)[0]
+    local_index_path = os.path.join(base_folder, ".index", relative_dir, f"{base_name}.json")
+    cloud_index_key = f".index/{relative_dir}/{base_name}.json".replace("//", "/")
+
+    os.makedirs(os.path.dirname(local_index_path), exist_ok=True)
+
+    try:
+        with open(pdf_path, "rb") as f:
+            pdf_bytes = f.read()
+
+        file_ext = os.path.splitext(filename)[1].lower()
+        pages_data, was_ocr_needed = extract_text_for_indexing(pdf_bytes, file_ext)
+
+        # Hash של ה-PDF
+        pdf_hex_md5 = hashlib.md5(pdf_bytes).hexdigest()
+
+        index_data = {
+            "filename": filename,
+            "pages": pages_data,
+            "ocr_used": was_ocr_needed,
+            "md5_hash": pdf_hex_md5,
+            "timestamp": time.time()
+        }
+
+        # יצירת ה-JSON כ-Bytes (למניעת בעיות Encoding/Newline בווינדוס)
+        json_payload = json.dumps(index_data, ensure_ascii=False, indent=4).encode('utf-8')
+        json_hex_md5 = hashlib.md5(json_payload).hexdigest()
+
+        # שמירה כבינארי (wb)
+        with open(local_index_path, "wb") as f:
+            f.write(json_payload)
+
+        if use_aws:
+            client = get_s3_client()
+            # העלאת PDF
+            client.upload_file(pdf_path, BUCKET_NAME, relative_file_path, ExtraArgs={
+                'Metadata': {'md5-hash': pdf_hex_md5}
+            })
+            # העלאת JSON
+            client.put_object(
+                Body=json_payload,
+                Bucket=BUCKET_NAME,
+                Key=cloud_index_key,
+                ContentType='application/json',
+                Metadata={'md5-hash': json_hex_md5}
+            )
+            print(f"✅ Uploaded: {filename} (JSON MD5: {json_hex_md5})")
+
+    except Exception as e:
+        print(f"❌ Error in upload: {e}")
 
 def get_s3_client():
     """Initializes AWS S3 client using environment variables."""
@@ -116,93 +317,6 @@ def get_local_hashes(file_path):
     b64_digest = base64.b64encode(binascii.unhexlify(hex_digest)).decode("utf-8")
     return hex_digest, b64_digest
 
-
-
-
-
-def get_ocr_text_from_pdf(pdf_path):
-    """
-    Extracts text from PDF.
-    Uses structured text first, falls back to OCR if the page looks like a scan.
-    """
-    full_text = []
-
-    # Configure Tesseract path if not in System PATH
-    # pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-
-    try:
-        with pdfplumber.open(pdf_path) as pdf:
-            for pnum, page in enumerate(pdf.pages, start=1):
-                # 1. Try Structured Extraction
-                text = page.extract_text() or ""
-
-                # 2. Check if we need OCR (if text is sparse/empty)
-                if len(text.strip()) < 50:
-                    print(f"Page {pnum}: Scanned image detected. Running OCR...")
-
-                    # Use pdfplumber's built-in renderer (avoids convert_from_path crash)
-                    # resolution=300 is 'Legal Quality'
-                    img = page.to_image(resolution=300).original
-                    img = img.convert('L')  # Grayscale helps OCR accuracy
-
-                    # Use 'heb_rashi' if that's your mode, otherwise 'heb+eng'
-                    if isLTR:
-                        page_text = pytesseract.image_to_string(img, lang='eng')
-                    else:
-                        raw_ocr = pytesseract.image_to_string(img, lang='heb')
-                        page_text = "\n".join([line[::-1] for line in raw_ocr.split('\n')])
-                else:
-                    page_text = "\n".join([line[::-1] for line in text.split('\n')])
-
-                full_text.append(page_text)
-
-        return "\n".join(full_text)
-
-    except Exception as e:
-        print(f"Error processing PDF: {e}")
-        return ""
-
-def upload_to_cloud(local_folder, filename, prefix=""):
-    """Securely uploads to the active cloud."""
-    local_path = os.path.join(local_folder, filename)
-    target_key = f"{prefix}/{filename}".replace("//", "/")
-    hex_md5, b64_md5 = get_local_hashes(local_path)
-
-    if USE_AWS:
-        client = get_s3_client()
-        client.upload_file(
-            local_path, BUCKET_NAME, target_key,
-            ExtraArgs={
-                'ServerSideEncryption': 'aws:kms',
-                'SSEKMSKeyId': KMS_KEY_ARN,
-                'Metadata': {'md5-hash': hex_md5}
-            }
-        )
-        '''
-        text_content = get_ocr_text_from_pdf(local_path)
-        base_name = os.path.splitext(filename)[0]
-        index_key = f".index/{base_name}.txt"
-
-        s3_client.put_object(
-            Body=text_content.encode('utf-8'),
-            Bucket=BUCKET_NAME,
-            Key=index_key,
-            ContentType='text/plain; charset=utf-8',
-            Metadata={'original-pdf': filename}  # Link back to the PDF
-        )
-        '''
-
-
-    else:
-        # Existing GCS Upload logic
-        client = get_storage_client()
-        bucket = client.bucket(BUCKET_NAME)
-        blob = bucket.blob(target_key)
-        blob.md5_hash = b64_md5
-        blob.upload_from_filename(local_path)
-
-
-
 def browse_s3_logic(prefix: str) -> Dict[str, List[str]]:
     """AWS S3 implementation of folder browsing."""
     try:
@@ -288,86 +402,98 @@ def md5_of_file(path):
             hash_md5.update(chunk)
     return base64.b64encode(binascii.unhexlify(hash_md5.hexdigest())).decode("utf-8")
 
-def check_sync(local_path, bucket_name, prefix=""):
-    if USE_AWS:
-        res = check_sync_s3(local_path, bucket_name, prefix=prefix)
-    else:
-        res = check_sync_gcs(local_path, bucket_name, prefix=prefix)
 
-    return res
-
-def check_sync_gcs(local_path, bucket_name, prefix=""):
-    """Compare local files with GCS bucket contents."""
-    client = storage.Client()
-    bucket = client.bucket(bucket_name)
-
-    # Collect local files
+def check_sync(local_path, bucket_name, prefix="", use_aws=True):
+    """
+    פונקציית סנכרון מאוחדת ל-AWS ו-GCS.
+    משווה קבצים מקומיים מול הענן ומציעה עדכון/מחיקה.
+    """
+    # 1. איסוף קבצים מקומיים וה-Hashes שלהם
     local_files = {}
     for root, _, files in os.walk(local_path):
         for f in files:
-            if f.startswith("$") or f.startswith("~$"):  # skip hidden/temp files
-                continue
+            if f.startswith("$") or f.startswith("~$"): continue
             full_path = os.path.join(root, f)
             rel_path = os.path.relpath(full_path, local_path).replace("\\", "/")
-            local_files[rel_path] = md5_of_file(full_path)
 
-    # Collect GCS blobs
-    gcs_files = {}
-    for blob in bucket.list_blobs(prefix=prefix):
-        # GCS md5Hash is base64-encoded; decode to hex
-        name1= blob.name
-        name1 = name1.replace(prefix, "")
-        name1 = name1.rstrip("/")
-        name1 = name1.lstrip("/")
+            # מקבלים Hex ל-AWS ו-Base64 ל-GCS
+            hex_md5, b64_md5 = get_local_hashes(full_path)
+            local_files[rel_path] = hex_md5 if use_aws else b64_md5
 
-        if blob.md5_hash:
-            gcs_files[name1] = blob.md5_hash
+    index_root = os.path.join(CLIENT_PREFIX_TO_STRIP , ".index")
+    if os.path.exists(index_root):
+        for root, _, files in os.walk(index_root):
+            for f in files:
+                if not f.endswith(".json"): continue
 
-    # Compare sets
-    missing_in_gcs = set(local_files) - set(gcs_files)
-    missing_locally = set(gcs_files) - set(local_files)
-    #mismatched = [f for f in local_files if f in gcs_files and local_files[f] != gcs_files[f]]
+                full_path = os.path.join(root, f)
+                # שימוש ב-local_path כבסיס כדי שהנתיב יתחיל ב-".index/..."
 
-    # Use a regular for loop for clarity
-    mismatched_files = []  # Track mismatches for the return dict
+                rel_to_index = os.path.relpath(full_path, index_root).replace("\\", "/")
+                rel_path = f".index/{rel_to_index}"
+                hex_md5, b64_md5 = get_local_hashes(full_path)
+                local_files[rel_path] = hex_md5 if use_aws else b64_md5
 
+    # 2. איסוף קבצים מהענן (AWS או GCS)
+    cloud_files = {}
+    if use_aws:
+        cloud_files = get_cloud_files_recursive(bucket_name, prefix)  # הפונקציה שכבר כתבת ל-S3
+    else:
+        global gcs_client
+        if gcs_client is None: gcs_client = get_storage_client()
+        bucket = gcs_client.bucket(bucket_name)
+        for blob in bucket.list_blobs(prefix=prefix):
+            name = blob.name[len(prefix):].lstrip("/")
+            if name: cloud_files[name] = blob.md5_hash
+
+    # 3. השוואת סטים
+    missing_in_cloud = set(local_files) - set(cloud_files)
+    missing_locally = set(cloud_files) - set(local_files)
+    mismatched_files = []
+
+    # לוגיקה לטיפול בקבצים חסרים בענן / ששונו מקומית
     for filename in local_files:
-        if filename in gcs_files:
-            if local_files[filename] != gcs_files[filename]:
-                mismatched_files.append(filename)  # Keep track of the mismatch
+        is_missing = filename in missing_in_cloud
+        is_mismatched = (filename in cloud_files and local_files[filename] != cloud_files[filename])
 
-                # 1. Create the Pop-up Box
-                msg = QMessageBox()
-                msg.setIcon(QMessageBox.Question)
-                # Ensure text direction follows your LTR setting
-                msg.setLayoutDirection(QtCore.Qt.LeftToRight if isLTR else QtCore.Qt.RightToLeft)
+        if is_missing or is_mismatched:
+            if is_mismatched: mismatched_files.append(filename)
 
-                msg.setWindowTitle("Sync Mismatch" if isLTR else "אי התאמה בסנכרון")
-                msg.setText(f"File changed: {filename}" if isLTR else f"קובץ השתנה: {filename}")
-                msg.setInformativeText("Upload to bucket?" if isLTR else "להעלות לענן?")
-                msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+            title = "Sync Mismatch" if is_mismatched else "Missing File"
+            text = f"File {filename} needs update."
 
-                # 2. Handle the User's Choice
-                if msg.exec_() == QMessageBox.Ok:
-                    # 3. Call the updated function with the bucket object
-                    upload_to_bucket(bucket, local_path, filename, prefix)
+            msg = QMessageBox()
+            msg.setIcon(QMessageBox.Question)
+            msg.setWindowTitle(title if isLTR else "סנכרון קבצים")
+            msg.setText(text if isLTR else f"הקובץ {filename} דורש עדכון בענן.")
+            msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
 
-                    success_msg = QMessageBox()
-                    success_msg.setText("Upload successful!" if isLTR else "העלאה הצליחה!")
-                    success_msg.exec_()
-                else:
-                    print(f"Upload cancelled for {filename}")
+            if msg.exec_() == QMessageBox.Ok:
+                # שימוש בפונקציה המאוחדת שכתבנו קודם!
+                upload_to_cloud(local_path, filename, base_folder=CLIENT_PREFIX_TO_STRIP, use_aws=use_aws)
 
-    sync1 = not missing_locally and not missing_in_gcs and not mismatched_files
+    # לוגיקה לטיפול בקבצים שנמחקו מקומית (מחיקה מהענן)
+    for filename in missing_locally:
+        if filename.startswith(".index/"): continue  # לא מוחקים את תיקיית האינדקס ישירות
 
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Warning)
+        msg.setWindowTitle("Delete?" if isLTR else "מחיקה?")
+        msg.setText(
+            f"File {filename} deleted locally. Delete from cloud?" if isLTR else f"קובץ {filename} נמחק מקומית. למחוק מהענן?")
+        msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+
+        if msg.exec_() == QMessageBox.Ok:
+            # שימוש בפונקציית המחיקה המאוחדת (כולל ה-JSON)
+            delete_from_cloud_with_index(filename, prefix=prefix, use_aws=use_aws)
+
+    sync_status = not missing_locally and not missing_in_cloud and not mismatched_files
     return {
-        "missing_in_gcs": missing_in_gcs,
+        "missing_in_gcs": missing_in_cloud,
         "missing_locally": missing_locally,
-        "mismatched": mismatched_files,  # Now correctly populated
-        "sync!": sync1
+        "mismatched": mismatched_files,
+        "sync!": sync_status
     }
-
-
 
 
 
@@ -400,139 +526,55 @@ def get_cloud_files_recursive(bucket_name, prefix):
     s3_client = get_s3_client()
     cloud_files = {}
 
-    if prefix and not prefix.endswith('/'):
-        prefix += '/'
+    # יצירת רשימת prefixes: המקורי שלך, והמקביל לו בתוך .index
+    # אם prefix הוא "גירושין", נסרוק גם את ".index/גירושין"
+    prefixes_to_scan = [prefix]
+    if prefix:
+        # מוודא שהנתיב לאינדקס נבנה נכון
+        clean_prefix = prefix.strip('/')
+        prefixes_to_scan.append(f".index/{clean_prefix}")
 
-    paginator = s3_client.get_paginator('list_objects_v2')
+    for current_scan_prefix in prefixes_to_scan:
+        # --- תחילת הקוד המקורי שלך (ללא שינוי בשורות) ---
+        search_prefix = current_scan_prefix
+        if search_prefix and not search_prefix.endswith('/'):
+            search_prefix += '/'
 
-    # REMOVED Delimiter='/' to allow recursion into subfolders
-    for page in paginator.paginate(Bucket=bucket_name, Prefix=prefix):
-        for obj in page.get('Contents', []):
-            full_key = obj['Key']
+        paginator = s3_client.get_paginator('list_objects_v2')
 
-            if full_key == prefix:
-                continue
+        for page in paginator.paginate(Bucket=bucket_name, Prefix=search_prefix):
+            for obj in page.get('Contents', []):
+                full_key = obj['Key']
 
-            # This now preserves the subfolder path:
-            # e.g., '2022/file.pdf' instead of just 'file.pdf'
-            name = full_key[len(prefix):]
+                if full_key == search_prefix:
+                    continue
 
-            if name.startswith('$') or name.startswith('~$') or name.startswith('$~') or '~$' in name or '$~' in name:
-                continue
+                # שמירה על הלוגיקה המקורית שלך לחילוץ השם
+                name = full_key[len(search_prefix):]
 
-            try:
-                head = s3_client.head_object(Bucket=bucket_name, Key=full_key)
-                md5_hash = head.get('Metadata', {}).get('md5-hash')
-                cloud_files[name] = md5_hash
+                # סינון קבצים זמניים בדיוק כפי שהגדרת
+                if name.startswith('$') or name.startswith('~$') or name.startswith(
+                        '$~') or '~$' in name or '$~' in name:
+                    continue
 
-            except Exception as e:
-                print(f"Error fetching metadata for {full_key}: {e}")
+                try:
+                    head = s3_client.head_object(Bucket=bucket_name, Key=full_key)
+                    md5_hash = head.get('Metadata', {}).get('md5-hash')
 
-    return cloud_files
+                    # אם אנחנו בסריקה של אינדקס, נשמור את השם עם הקידומת המתאימה
+                    # כדי שה-GUI יזהה שמדובר בקובץ מהתיקייה הנסתרת
+                    dict_key = name
+                    if full_key.startswith(".index/"):
+                        # בונה את השם כך שיכלול את המבנה שה-GUI מצפה לו ב-.index
+                        dict_key = f".index/{clean_prefix}/{name}".replace("//", "/")
 
-# Usage
-def get_cloud_files_with_metadata(bucket_name, prefix):
-    # Use your authenticated client
-    s3_client = get_s3_client()
-    cloud_files = {}
+                    cloud_files[dict_key] = md5_hash
 
-    # Ensure prefix ends with /
-    if prefix and not prefix.endswith('/'):
-        prefix += '/'
-
-    # 1. List all objects in the prefix
-    paginator = s3_client.get_paginator('list_objects_v2')
-
-    for page in paginator.paginate(Bucket=bucket_name, Prefix=prefix, Delimiter='/'):
-        # Process files (Contents)
-        for obj in page.get('Contents', []):
-            full_key = obj['Key']
-
-            # Skip the folder placeholder itself
-            if full_key == prefix:
-                continue
-
-            # Extract the clean filename (abc.pdf instead of גירושין/abc.pdf)
-            name = full_key[len(prefix):]
-
-            # Filter out temporary/system files
-            if name.startswith('$') or name.startswith('~$'):
-                continue
-
-            try:
-                # 2. Fetch the MD5 stored in metadata during upload
-                #head = s3_client.head_object(Bucket=bucket_name, Key=full_key)
-
-                # S3 returns metadata keys in lowercase
-                #md5_hash = head.get('Metadata', {}).get('md5-hash')
-                etag_md5 = obj.get('ETag').strip('"')
-                # Add to our dictionary
-                cloud_files[name] = etag_md5
-
-            except Exception as e:
-                print(f"Error fetching metadata for {full_key}: {e}")
+                except Exception as e:
+                    print(f"Error fetching metadata for {full_key}: {e}")
+        # --- סוף הקוד המקורי שלך ---
 
     return cloud_files
-
-def check_sync_s3(local_path, bucket_name, prefix=""):
-    """Compare local files with Cloud contents (GCS or S3) keeping original return format."""
-
-
-    client = get_s3_client()
-
-    # 1. Collect local files (Hex for S3, B64 for GCS)
-    local_files = {}
-    for root, _, files in os.walk(local_path):
-        for f in files:
-            if f.startswith("$") or f.startswith("~$"):
-                continue
-            full_path = os.path.join(root, f)
-            rel_path = os.path.relpath(full_path, local_path).replace("\\", "/")
-
-            # Using your existing get_local_hashes function
-            hex_md5, b64_md5 = get_local_hashes(full_path)
-            local_files[rel_path] = hex_md5
-
-    # 2. Collect Cloud files
-    cloud_files1 = get_cloud_files_with_metadata(bucket_name, prefix)
-    cloud_files = get_cloud_files_recursive(bucket_name, prefix)
-    # 3. Compare sets using YOUR original keys
-    missing_in_gcs = set(local_files) - set(cloud_files)  # "GCS" name kept for your UI
-    missing_locally = set(cloud_files) - set(local_files)
-
-    mismatched_files = []
-
-    for filename in local_files:
-        if filename in cloud_files:
-            if local_files[filename] != cloud_files[filename]:
-                #mismatched_files.append(filename)
-
-                # YOUR original Popup Logic
-
-                msg = QMessageBox()
-                msg.setIcon(QMessageBox.Question)
-                msg.setLayoutDirection(QtCore.Qt.LeftToRight if isLTR else QtCore.Qt.RightToLeft)
-                msg.setWindowTitle("Sync Mismatch" if isLTR else "אי התאמה בסנכרון")
-                msg.setText(f"File changed: {filename}" if isLTR else f"קובץ השתנה: {filename}")
-                msg.setInformativeText("Upload to bucket?" if isLTR else "להעלות לענן?")
-                msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
-
-                if msg.exec_() == QMessageBox.Ok:
-                    # Uses the unified uploader we fixed earlier
-                    upload_to_cloud(local_path, filename, prefix)
-                    success_msg = QMessageBox()
-                    success_msg.setText("Upload successful!" if isLTR else "העלאה הצליחה!")
-                    success_msg.exec_()
-
-    sync1 = not missing_locally and not missing_in_gcs and not mismatched_files
-
-    # RETURNS YOUR ORIGINAL DICT KEYS
-    return {
-        "missing_in_gcs": missing_in_gcs,
-        "missing_locally": missing_locally,
-        "mismatched": mismatched_files,
-        "sync!": sync1
-    }
 
 # ==============================================================================
 # GCS CORE BROWSER FUNCTION
