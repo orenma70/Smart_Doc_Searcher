@@ -67,12 +67,8 @@ LATIN_LETTER_PATTERN = re.compile(r'[a-zA-Z]')
 sequence_pattern = re.compile(r'\d+')
 LATIN_LETTER_PATTERNnNum = re.compile(r'[a-zA-Z]+|\d+')
 
-from config_reader import BUCKET_NAME, API_search_url, API_simple_search_url, API_cache_status_url, CLIENT_PREFIX_TO_STRIP
-
-
-
-
-
+from config_reader import BUCKET_NAME, API_search_url, API_simple_search_url, API_get_version_url, \
+    CLIENT_PREFIX_TO_STRIP, cloud_storage_provider
 
 
 # Function to implement in your class:
@@ -979,7 +975,16 @@ def docx_search(self, path, words, mode='any', search_mode='partial'):
 
     return results
 
-
+def get_remote_version(api_url):
+    try:
+        # פנייה ל-Endpoint החדש שיצרנו
+        response = requests.get(f"{api_url}", timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("version", "Unknown")
+    except Exception as e:
+        return f"Error: {e}"
+    return "Offline"
 
 
 class SearchApp(QtWidgets.QWidget):
@@ -991,7 +996,7 @@ class SearchApp(QtWidgets.QWidget):
                 self.setWindowTitle(
                     f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_run_rev} -  {self.cloud_storage_provider} ")
             elif self.cloud_storage_provider == "Amazon":
-                self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_storage_provider}")
+                self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_run_rev} - {self.cloud_storage_provider}")
             else:
                 self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_storage_provider}")
 
@@ -1001,18 +1006,26 @@ class SearchApp(QtWidgets.QWidget):
         self.thread = None
 
         ui_setup.setup_ui(self)
-        if self.update_app_title:
-            response = requests.get(API_cache_status_url)
+
+        use_aws = self.cloud_storage_provider == "Amazon"
+
+        if use_aws:
+            self.cloud_run_rev = get_remote_version(API_get_version_url)
+        else:
+            response = requests.get(API_get_version_url)
             response_str = response.content.decode('utf-8').strip()
             data = json.loads(response_str)
-            self.cloud_run_rev=data["REVISION"]
+            self.cloud_run_rev = data["REVISION"]
+
+        if self.update_app_title:
 
             self.set_window_title()
 
 
         self.resize(1800, 1200)
 
-        result = check_sync(CLIENT_PREFIX_TO_STRIP+"/גירושין/", BUCKET_NAME, prefix='גירושין')
+        result = check_sync(CLIENT_PREFIX_TO_STRIP+"/גירושין/", BUCKET_NAME, prefix='גירושין', use_aws = use_aws )
+
         sync0 = result["sync!"]
         self.sync0 = sync0
         self.update_gcs_radio()

@@ -6,31 +6,42 @@ Write-Host "--- 0. login  ---" -ForegroundColor Cyan
 aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin 038715112888.dkr.ecr.ap-southeast-2.amazonaws.com
 
 # Variables
-$ECR_URL = "038715112888.dkr.ecr.ap-southeast-2.amazonaws.com/smart-doc-api:latest"
+$ver_name = "v21.2.0"
+$ECR_URL = "038715112888.dkr.ecr.ap-southeast-2.amazonaws.com/smart-doc-api:$ver_name"
+
 $SERVICE_ARN = "arn:aws:apprunner:ap-southeast-2:038715112888:service/smart-doc-searcher-api-final/5abc7f51e3a04885bf68e15c4980927f"
 
 Write-Host "--- 1. Building Image ---" -ForegroundColor Cyan
-docker build -t smart-doc-api .
+docker build -t smart-doc-api:$ver_name .
 
 Write-Host "--- 2. Tagging and Pushing to ECR ---" -ForegroundColor Cyan
-docker tag smart-doc-api:latest $ECR_URL
+docker tag smart-doc-api:$ver_name $ECR_URL
 docker push $ECR_URL
+
 
 Write-Host "--- 3. Triggering AWS Deployment (Ensuring Port 8080) ---" -ForegroundColor Cyan
 
-# שימוש ב-Here-String שומר על ה-JSON נקי לגמרי
-$sourceConfig = @"
-{
-    "ImageRepository": {
-        "ImageIdentifier": "$ECR_URL",
-        "ImageRepositoryType": "ECR",	
-        "ImageConfiguration": { "Port": "8080" }
+# המבנה הנכון עבור App Runner: מילון פשוט של מפתח וערך
+$configObject = @{
+    ImageRepository = @{
+        ImageIdentifier = $ECR_URL
+        ImageRepositoryType = "ECR"
+        ImageConfiguration = @{
+            Port = "8080"
+            # כאן השינוי: במקום רשימה עם Name/Value, פשוט Key = Value
+            RuntimeEnvironmentVariables = @{
+                "APP_VERSION" = $ver_name
+            }
+        }
     }
 }
-"@
 
-# שליחת הפקודה
-#aws apprunner update-service --service-arn $SERVICE_ARN --source-configuration $sourceConfig
+# הפיכה ל-JSON דחוס והוספת הלוכסנים (Escaping) עבור Windows
+$sourceConfig = $configObject | ConvertTo-Json -Depth 10 -Compress
+$sourceConfigEscaped = $sourceConfig.Replace('"', '\"')
+
+# שליחה לאמזון
+aws apprunner update-service --service-arn $SERVICE_ARN --source-configuration "$sourceConfigEscaped"
 
 Write-Host "--- 4. Monitoring Deployment ---" -ForegroundColor Cyan
 $total_sec = 0

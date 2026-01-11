@@ -1,4 +1,4 @@
-import boto3
+import boto3, os
 import time
 import traceback
 from flask import Flask, request, jsonify
@@ -143,6 +143,14 @@ def simple_search_endpoint():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+@app.route('/version')
+def get_version():
+    # הוא ימשוך אוטומטית את ה-v21.1.0 מה-App Runner
+    return {
+        "version": os.getenv("APP_VERSION", "local-dev"),
+        "status": "stable",
+        "mode": "paragraph"
+    }
 
 if __name__ == "__main__":
     if False:

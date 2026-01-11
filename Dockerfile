@@ -14,8 +14,7 @@ RUN apt-get update && apt-get install -y \
     tesseract-ocr-heb \
     tesseract-ocr-eng \
     libtesseract-dev \
-    libwmf-dev \
-    libpng-dev \
+      libpng-dev \
     libjpeg-dev \
     libtiff-dev \
     libgl1 \

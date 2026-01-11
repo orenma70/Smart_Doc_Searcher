@@ -1,7 +1,7 @@
 
 
 # ... (משתנים אחרים כמו BUCKET_NAME) 
-cloud_storage_provider=Amazon # Amazon Google
+cloud_storage_provider=Google # Amazon Google
 
 BUCKET_NAME_Amazon=oren-smart-search-docs-amazon2
 BUCKET_NAME_Google=oren-smart-search-docs-1205
@@ -47,6 +47,6 @@ API_main_amazon=https://bgqyxb9ztm.ap-southeast-2.awsapprunner.com/
 
 API_search_url=search
 API_simple_search_url=simple_search	
-API_start_cache_url=start_cache
+API_start_cache_url=cache_status
 API_cache_status_url=cache_status
-
+API_get_version_url = version

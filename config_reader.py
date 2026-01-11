@@ -43,15 +43,14 @@ cloud_storage_provider=read_setup("cloud_storage_provider")
 if cloud_storage_provider == "Amazon":
     API_main = read_setup("API_main_amazon")
     API_simple_search_url = API_main + read_setup("API_simple_search_url")
-    API_main = read_setup("API_main_google")
     API_search_url = API_main + read_setup("API_search_url")
-    API_start_cache_url = API_main + read_setup("API_start_cache_url")
+    API_get_version_url = API_main + read_setup("API_get_version_url")
     API_cache_status_url = API_main + read_setup("API_cache_status_url")
 else:
     API_main = read_setup("API_main_google")
     API_simple_search_url = API_main + read_setup("API_simple_search_url")
     API_search_url = API_main + read_setup("API_search_url")
-    API_start_cache_url = API_main + read_setup("API_start_cache_url")
+    API_get_version_url = API_main + read_setup("API_cache_status_url")
     API_cache_status_url = API_main + read_setup("API_cache_status_url")
 
 
