@@ -19,6 +19,9 @@ from docx import Document
 from document_parsers import extract_text_and_images_from_pdf
 import pytesseract
 from PIL import Image
+from azure.storage.blob import BlobServiceClient
+
+
 
 
 # --- Global Client Variables (Set to None for Lazy Loading) ---
@@ -43,6 +46,7 @@ MAX_CONCURRENT_DOWNLOADS = 10
 # Value: List[Dict] (The document data for that path)
 DIRECTORY_CACHE_MAP: Dict[str, List[Dict]] = {}
 cache_lock = threading.Lock() # Use this lock for thread-safe access to the map
+
 
 
 def get_hd_files_context(directory_path: str, local_root: str) -> List[Dict[str, Any]]:
@@ -190,31 +194,62 @@ def get_documents_from_cache(directory_path: str) -> Optional[List[Dict[str, Any
 
 
 def get_documents_for_path(directory_path: str) -> List[Dict[str, Any]]:
-    # 1. Normalize the path
-    # (Ensure your path cleaning logic from the previous step is here!)
-    # ... directory_path normalization code ...
-    cleaned_path = directory_path.strip("/").lower()  # Example of final clean
+    # 1. נרמול הנתיב (חשוב להתאמה למפתחות בענן)
+    cleaned_path = directory_path.strip("/")
 
-    # 2. GET from Cache (FAST PATH)
+    # 2. ניסיון משיכה מה-Cache (נשאר ללא שינוי - FAST PATH)
     cached_docs = get_documents_from_cache(cleaned_path)
     if cached_docs is not None:
         return cached_docs
 
-    # 3. CACHE MISS (SLOW PATH)
-    print(f"CACHE-MISS: Fetching from source for '{cleaned_path}'.")
+    # 3. CACHE MISS - שליפה מה-Bucket (SLOW PATH)
+    print(f"CACHE-MISS: Fetching JSON indices for '{cleaned_path}'.")
 
-    # Perform the expensive fetch (Local or GCS)
-    if LOCAL_MODE == "True" and not IS_CLOUD_RUN:
-        fetched_documents = get_hd_files_context(cleaned_path, LOCAL_ROOT_PATH)
-    else:
-        fetched_documents = get_gcs_files_context(cleaned_path, BUCKET_NAME)
+    fetched_documents = []
 
-    # 4. PUT into Cache (Write)
+    try:
+        client = get_storage_client()
+        bucket = client.bucket(BUCKET_NAME)
+
+        # הגדרת ה-prefix לחיפוש הקבצים המקוריים
+        prefix = cleaned_path + "/" if cleaned_path else ""
+        blobs = bucket.list_blobs(prefix=prefix)
+
+        for blob in blobs:
+            key = blob.name
+            # דילוג על תיקיות והתיקייה .index עצמה
+            if key.endswith('/') or key.startswith('.index/'):
+                continue
+
+            # בניית הנתיב לקובץ ה-JSON התואם
+            base_name = os.path.splitext(key)[0]
+            index_key = f".index/{base_name}.json"
+
+            try:
+                index_blob = bucket.blob(index_key)
+                if index_blob.exists():
+                    # הורדת ה-JSON וטעינת הנתונים
+                    json_data = json.loads(index_blob.download_as_text())
+
+                    # בניית האובייקט שהחיפוש מצפה לו
+                    fetched_documents.append({
+                        "name": os.path.basename(key),
+                        "full_path": key,
+                        "pages": json_data.get("pages", []),
+                        # יצירת שדה content שטוח לטובת ה-Gemini (RAG)
+                        "content": "\n".join([" ".join(p.get("lines", [])) for p in json_data.get("pages", [])])
+                    })
+            except Exception as e:
+                print(f"Skipping {key}: Index error: {e}")
+
+    except Exception as e:
+        print(f"🔥 GCS Fetch Error: {e}")
+
+    # 4. שמירה ב-Cache (כדי שהחיפוש הבא יהיה מהיר)
     if fetched_documents:
         put_documents_in_cache(cleaned_path, fetched_documents)
 
     return fetched_documents
-
 
 def initialize_all_clients():
     """

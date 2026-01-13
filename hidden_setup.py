@@ -91,11 +91,8 @@ def handle_setup_dialog(parent_app):
             parent_app.Voice_recognition_mode = results["Voice_recognition_mode"]
             if parent_app.cloud_storage_provider != results["cloud_storage_provider"]:
                 parent_app.cloud_storage_provider = results["cloud_storage_provider"]
-                if parent_app.cloud_storage_provider == "Google":
-                    parent_app.setWindowTitle(
-                        f"  הדס לוי -  עורך דין - תוכנת חיפוש  {parent_app.cloud_run_rev} -  {parent_app.cloud_storage_provider} ")
-                elif parent_app.cloud_storage_provider == "Amazon":
-                    parent_app.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {parent_app.cloud_storage_provider}")
+                if parent_app.cloud_storage_provider in ["Google", "Amazon", "Microsoft"]:
+                    parent_app.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {parent_app.cloud_run_rev} -  {parent_app.cloud_storage_provider} ")
                 else:
                     parent_app.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {parent_app.cloud_storage_provider}")
             # 4. Immediate UI Update (Direction)

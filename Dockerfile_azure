@@ -1,0 +1,44 @@
+# השתמש בגרסה היציבה שציינת
+FROM python:3.11-slim-bullseye
+
+# הגדרות סביבה סטנדרטיות
+ENV PORT 8080
+ENV PYTHONUNBUFFERED True
+ENV APP_VERSION "v22.3.0"
+
+# 1. התקנת כל התלויות עבור Tesseract ועבור עיבוד תמונה/PDF ב-Azure
+RUN apt-get update && apt-get install -y \
+    gcc \
+    libc-dev \
+    libffi-dev \
+    tesseract-ocr \
+    tesseract-ocr-heb \
+    tesseract-ocr-eng \
+    libtesseract-dev \
+    libpng-dev \
+    libjpeg-dev \
+    libtiff-dev \
+    libgl1 \
+    libgl1-mesa-glx \
+    && rm -rf /var/lib/apt/lists/*
+
+# 2. תיקיית עבודה
+WORKDIR /app
+
+# 3. התקנת Requirements (משתמש בקובץ הקיים שלך)
+COPY amazon_requirements.txt .
+RUN pip install --no-cache-dir -r amazon_requirements.txt
+
+# 4. העתקת הקבצים האמיתיים שלך (הקפד שהשמות תואמים בדיוק)
+COPY setup.txt .
+COPY azure_search_core.py .
+COPY config_reader.py .
+COPY document_parsers.py .
+COPY azure_search_utilities.py .
+
+# 5. חשיפת הפורט ש-Azure מצפה לו
+EXPOSE 8080
+
+# 6. הרצת השרת
+# שים לב: שיניתי את הקובץ המורץ ל-azure_search_core (כי אנחנו ב-Azure עכשיו)
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "8", "--timeout", "120", "azure_search_core:app"]

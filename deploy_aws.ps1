@@ -1,23 +1,23 @@
 # aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin 038715112888.dkr.ecr.ap-southeast-2.amazonaws.com
 # passwors lost rerun this
 
-Write-Host "--- 0. login  ---" -ForegroundColor Cyan
 
+Write-Host "--- 0. login  ---" -ForegroundColor Cyan
 aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin 038715112888.dkr.ecr.ap-southeast-2.amazonaws.com
 
 # Variables
-$ver_name = "v21.2.0"
+$ver_name = "v22.3.0"
 $ECR_URL = "038715112888.dkr.ecr.ap-southeast-2.amazonaws.com/smart-doc-api:$ver_name"
-
 $SERVICE_ARN = "arn:aws:apprunner:ap-southeast-2:038715112888:service/smart-doc-searcher-api-final/5abc7f51e3a04885bf68e15c4980927f"
+$s3_name = "oren-smart-search-docs-amazon2"
+Write-Host "--- 1. Preparing Dockerfile and Building Image ---" -ForegroundColor Cyan
 
-Write-Host "--- 1. Building Image ---" -ForegroundColor Cyan
-docker build -t smart-doc-api:$ver_name .
+
+docker build -f Dockerfile_amazon -t smart-doc-api:$ver_name .
 
 Write-Host "--- 2. Tagging and Pushing to ECR ---" -ForegroundColor Cyan
 docker tag smart-doc-api:$ver_name $ECR_URL
 docker push $ECR_URL
-
 
 Write-Host "--- 3. Triggering AWS Deployment (Ensuring Port 8080) ---" -ForegroundColor Cyan
 
@@ -28,14 +28,14 @@ $configObject = @{
         ImageRepositoryType = "ECR"
         ImageConfiguration = @{
             Port = "8080"
-            # כאן השינוי: במקום רשימה עם Name/Value, פשוט Key = Value
             RuntimeEnvironmentVariables = @{
                 "APP_VERSION" = $ver_name
+                "BUCKET_NAME" = $s3_name
+                "AWS_REGION"  = "ap-southeast-2"             # AND THIS
             }
         }
     }
 }
-
 # הפיכה ל-JSON דחוס והוספת הלוכסנים (Escaping) עבור Windows
 $sourceConfig = $configObject | ConvertTo-Json -Depth 10 -Compress
 $sourceConfigEscaped = $sourceConfig.Replace('"', '\"')
@@ -45,7 +45,7 @@ aws apprunner update-service --service-arn $SERVICE_ARN --source-configuration "
 
 Write-Host "--- 4. Monitoring Deployment ---" -ForegroundColor Cyan
 $total_sec = 0
-$sec_int = 10
+$sec_int = 15
 
 while ($true) {
     $status = aws apprunner describe-service --service-arn $SERVICE_ARN --query "Service.Status" --output text
@@ -74,4 +74,8 @@ while ($true) {
     Start-Sleep -Seconds $sec_int
     $total_sec += $sec_int
 }
+
+Write-Host "--- 5. Cleaning up old images ---" -ForegroundColor Cyan
+docker image prune -f
+
 Write-Host "Done! Wait a few minutes for the status to become RUNNING." -ForegroundColor Green

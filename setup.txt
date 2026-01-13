@@ -1,10 +1,11 @@
 
 
 # ... (משתנים אחרים כמו BUCKET_NAME) 
-cloud_storage_provider=Google # Amazon Google
+cloud_storage_provider=Microsoft # Amazon Google Microsoft
 
 BUCKET_NAME_Amazon=oren-smart-search-docs-amazon2
 BUCKET_NAME_Google=oren-smart-search-docs-1205
+BUCKET_NAME_Microsoft=oren-smart-search-docs-azure  # smartsearch3
 
 #KMS_KEY_ARN=arn:aws:s3:::oren-smart-search-docs-amazon
 #AWS_Region=eu-north-1  983426483678 SmartSearch Jm2006
@@ -44,6 +45,10 @@ iCloud_address=ornma70@iCloud.com
 # כתובות ה-API של Cloud Run 
 API_main_google=https://smart-doc-searcher-api-v15-359127107055.us-central1.run.app/
 API_main_amazon=https://bgqyxb9ztm.ap-southeast-2.awsapprunner.com/
+API_main_microsoft=https://smart-doc-searcher-api.lemoncoast-d85338ac.eastus.azurecontainerapps.io/
+
+
+/version
 
 API_search_url=search
 API_simple_search_url=simple_search	

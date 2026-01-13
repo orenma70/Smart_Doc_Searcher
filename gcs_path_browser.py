@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional, Union
 # We assume PyQt5 is used based on QFileDialog in browse_directory
 from PyQt5 import QtWidgets, QtCore, QtGui
 from search_utilities import get_storage_client
+from azure_search_utilities import browse_azure_path_logic, get_azure_client
 import time
 import hashlib
 import binascii, base64
@@ -19,8 +20,20 @@ from PIL import Image
 from docx import Document
 import json
 from config_reader import CLIENT_PREFIX_TO_STRIP
+from azure.storage.blob import BlobServiceClient
 
-USE_AWS = cloud_storage_provider == "Amazon"  # Your existing flag
+class CloudProvider:
+    AWS = "Amazon"
+    GOOGLE = "Google"
+    AZURE = "Microsoft"
+
+# הגדרת ה-Mode לפי בחירת המשתמש
+current_provider = cloud_storage_provider # מגיע מהקונפיגורציה שלך
+
+use_mode_aws = (current_provider == CloudProvider.AWS)
+use_mode_clr = (current_provider == CloudProvider.GOOGLE)
+use_mode_azr = (current_provider == CloudProvider.AZURE)
+
 # Set your flag here based on your environment
 
 
@@ -31,7 +44,69 @@ s3_client: Any = None
 KMS_KEY_ARN = "arn:aws:kms:ap-southeast-2:038715112888:key/82ae7f3a-eb41-4f29-bd2c-85b9ab573023"
 
 
-def delete_from_cloud_with_index(filename, prefix="", use_aws=True):
+
+
+def get_azure_files_recursive(container_name, prefix):
+    # התחברות ללקוח (יש להגדיר CONNECTION_STRING במערכת)
+    connection_string = os.getenv("Azuresmartsearch3key1conn")
+    blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+    container_client = blob_service_client.get_container_client(container_name)
+
+    cloud_files = {}
+
+    # יצירת רשימת prefixes לסריקה
+    prefixes_to_scan = [prefix]
+    if prefix:
+        clean_prefix = prefix.strip('/')
+        prefixes_to_scan.append(f".index/{clean_prefix}")
+
+    for current_scan_prefix in prefixes_to_scan:
+        search_prefix = current_scan_prefix
+        if search_prefix and not search_prefix.endswith('/'):
+            search_prefix += '/'
+
+        # ב-Azure, list_blobs מחזיר גנרטור שעושה Pagination אוטומטי
+        blobs = container_client.list_blobs(name_starts_with=search_prefix)
+
+        for blob in blobs:
+            full_key = blob.name
+
+            if full_key == search_prefix:
+                continue
+
+            # חילוץ שם הקובץ היחסי
+            name = full_key[len(search_prefix):]
+
+            # סינון קבצים זמניים (לפי הלוגיקה שלך)
+            if any(pattern in name for pattern in ['$', '~$', '$~']):
+                continue
+
+            try:
+                # ב-Azure ה-MD5 נמצא לרוב ב-blob.content_settings.content_md5
+                # הוא מגיע בפורמט bytes של Base64, לכן נהפוך אותו לסטרינג
+                md5_hash = None
+                if blob.content_settings.content_md5:
+                    import base64
+                    md5_hash = base64.b64encode(blob.content_settings.content_md5).decode('utf-8')
+
+                # אם ה-MD5 לא שם, אפשר לחפש ב-Metadata (אם שמרת אותו שם ידנית)
+                if not md5_hash:
+                    md5_hash = blob.metadata.get('md5_hash')
+
+                # בניית המפתח למילון (תאימות ל-GUI)
+                dict_key = name
+                if full_key.startswith(".index/"):
+                    clean_p = prefix.strip('/')
+                    dict_key = f".index/{clean_p}/{name}".replace("//", "/")
+
+                cloud_files[dict_key] = md5_hash
+
+            except Exception as e:
+                print(f"Error processing metadata for blob {full_key}: {e}")
+
+    return cloud_files
+
+def delete_from_cloud_with_index(filename, prefix=""):
     """
     מוחק מהענן (AWS או GCS) את הקובץ המקורי ואת האינדקס שלו
     """
@@ -40,8 +115,9 @@ def delete_from_cloud_with_index(filename, prefix="", use_aws=True):
     base_name = os.path.splitext(filename)[0]
     index_key = f".index/{prefix}/{base_name}.json".replace("//", "/").strip("/")
 
+
     try:
-        if use_aws:
+        if use_mode_aws:
             # --- מחיקה מ-AWS S3 ---
             client = get_s3_client()
 
@@ -58,7 +134,7 @@ def delete_from_cloud_with_index(filename, prefix="", use_aws=True):
             )
             print(f"🗑️ AWS: Deleted {target_key} and its index.")
 
-        else:
+        elif use_mode_clr:
             # --- מחיקה מ-Google Cloud Storage ---
             global gcs_client
             if gcs_client is None:
@@ -75,8 +151,24 @@ def delete_from_cloud_with_index(filename, prefix="", use_aws=True):
                 index_blob.delete()
 
             print(f"🗑️ GCS: Deleted {target_key} and its index.")
+        elif use_mode_azr:
+            # --- מחיקה מ-Microsoft Azure Blob Storage ---
+            client = get_azure_client()
+            container_client = client.get_container_client(BUCKET_NAME)
 
-        return True
+            # מחיקה של הקובץ המקורי
+            blob_file = container_client.get_blob_client(target_key)
+            if blob_file.exists():
+                blob_file.delete_blob()
+
+            # מחיקה של האינדקס
+            blob_index = container_client.get_blob_client(index_key)
+            if blob_index.exists():
+                blob_index.delete_blob()
+
+            print(f"🗑️ Azure: Deleted {target_key} and its index.")
+
+
 
     except Exception as e:
         print(f"❌ Error during cloud deletion of {filename}: {e}")
@@ -170,8 +262,9 @@ def extract_text_for_indexing(file_bytes, file_ext):
     return pages_data, used_ocr
 
 
-def upload_to_cloud(local_folder, filename, base_folder, use_aws=True):
+def upload_to_cloud(local_folder, filename, base_folder):
     # נרמול נתיבים
+
     local_folder = os.path.normpath(local_folder)
     base_folder = os.path.normpath(base_folder)
     pdf_path = os.path.join(local_folder, filename)
@@ -195,7 +288,7 @@ def upload_to_cloud(local_folder, filename, base_folder, use_aws=True):
 
         # Hash של ה-PDF
         pdf_hex_md5 = hashlib.md5(pdf_bytes).hexdigest()
-
+        hex_md5, b64_md5 = get_local_hashes(pdf_path)
         index_data = {
             "filename": filename,
             "pages": pages_data,
@@ -212,7 +305,7 @@ def upload_to_cloud(local_folder, filename, base_folder, use_aws=True):
         with open(local_index_path, "wb") as f:
             f.write(json_payload)
 
-        if use_aws:
+        if use_mode_aws:
             client = get_s3_client()
             # העלאת PDF
             client.upload_file(pdf_path, BUCKET_NAME, relative_file_path, ExtraArgs={
@@ -227,6 +320,69 @@ def upload_to_cloud(local_folder, filename, base_folder, use_aws=True):
                 Metadata={'md5-hash': json_hex_md5}
             )
             print(f"✅ Uploaded: {filename} (JSON MD5: {json_hex_md5})")
+        elif use_mode_clr:
+            client = get_storage_client()
+            bucket = client.bucket(BUCKET_NAME)
+
+            blob_file = bucket.blob(relative_file_path)
+            blob_file.md5_hash = b64_md5
+            blob_file.metadata = {'md5-hash': pdf_hex_md5}  # שומרים גם Hex למען האחידות עם AWS
+            blob_file.upload_from_filename(pdf_path)
+
+            blob_index = bucket.blob(cloud_index_key)
+            import base64
+            json_b64_md5 = base64.b64encode(hashlib.md5(json_payload).digest()).decode('utf-8')
+            blob_index.md5_hash = json_b64_md5
+
+            blob_index.metadata = {'md5-hash': json_hex_md5}
+
+            blob_index.content_type = 'application/json'
+
+            # העלאה ישירות מהזיכרון (כמו put_object)
+
+            blob_index.upload_from_string(json_payload, content_type='application/json')
+
+            print(f"✅ Uploaded to Google: {filename} (JSON MD5: {json_hex_md5})")
+        elif use_mode_azr:
+            client = get_azure_client()
+            # מקבלים גישה לקונטיינר
+            container_client = client.get_container_client(BUCKET_NAME)
+
+            # 1. העלאת קובץ ה-PDF
+            blob_file = container_client.get_blob_client(relative_file_path)
+
+            import base64
+            # Azure דורש את ה-MD5 בפורמט Bytes לצורך אימות (Integrity check)
+            md5_bytes = base64.b64decode(b64_md5)
+
+            from azure.storage.blob import ContentSettings
+
+            with open(pdf_path, "rb") as data:
+                blob_file.upload_blob(
+                    data,
+                    overwrite=True,
+                    content_settings=ContentSettings(content_md5=md5_bytes),
+                    # שומרים את ה-Hex ב-Metadata כדי שיהיה לך קל להשוות עם AWS
+                    metadata={'md5_hash': pdf_hex_md5}
+                )
+
+            # 2. העלאת קובץ ה-JSON (האינדקס)
+            blob_index = container_client.get_blob_client(cloud_index_key)
+
+            # חישוב MD5 ל-JSON (בפורמט Bytes עבור Azure)
+            json_md5_bytes = hashlib.md5(json_payload).digest()
+
+            blob_index.upload_blob(
+                json_payload,
+                overwrite=True,
+                content_settings=ContentSettings(
+                    content_type='application/json; charset=utf-8',  # מונע ג'יבריש בעברית
+                    content_md5=json_md5_bytes
+                ),
+                metadata={'md5_hash': json_hex_md5}
+            )
+
+            print(f"✅ Uploaded to Azure: {filename} (JSON MD5: {json_hex_md5})")
 
     except Exception as e:
         print(f"❌ Error in upload: {e}")
@@ -254,11 +410,14 @@ def browse_cloud_path(self) -> Dict[str, List[str]]:
     if normalized_prefix and not normalized_prefix.endswith('/'):
         normalized_prefix += '/'
 
-    if USE_AWS:
+    if use_mode_aws:
         return browse_s3_path_logic(normalized_prefix)
-    else:
+    elif use_mode_clr:
         return browse_gcs_path(self)
-
+    elif use_mode_azr:
+        return browse_azure_path_logic(normalized_prefix)
+    else:
+        return False
 
 def browse_s3_path_logic(prefix: str) -> Dict[str, List[str]]:
     """AWS S3 implementation: returns a list of folder names just like GCS."""
@@ -403,7 +562,7 @@ def md5_of_file(path):
     return base64.b64encode(binascii.unhexlify(hash_md5.hexdigest())).decode("utf-8")
 
 
-def check_sync(local_path, bucket_name, prefix="", use_aws=True):
+def check_sync(local_path, bucket_name, prefix="", use_mode=True):
     """
     פונקציית סנכרון מאוחדת ל-AWS ו-GCS.
     משווה קבצים מקומיים מול הענן ומציעה עדכון/מחיקה.
@@ -418,7 +577,7 @@ def check_sync(local_path, bucket_name, prefix="", use_aws=True):
 
             # מקבלים Hex ל-AWS ו-Base64 ל-GCS
             hex_md5, b64_md5 = get_local_hashes(full_path)
-            local_files[rel_path] = hex_md5 if use_aws else b64_md5
+            local_files[rel_path] = hex_md5 if use_mode_aws else b64_md5
 
     index_root = os.path.join(CLIENT_PREFIX_TO_STRIP , ".index")
     if os.path.exists(index_root):
@@ -432,13 +591,15 @@ def check_sync(local_path, bucket_name, prefix="", use_aws=True):
                 rel_to_index = os.path.relpath(full_path, index_root).replace("\\", "/")
                 rel_path = f".index/{rel_to_index}"
                 hex_md5, b64_md5 = get_local_hashes(full_path)
-                local_files[rel_path] = hex_md5 if use_aws else b64_md5
+                local_files[rel_path] = hex_md5 if use_mode_aws else b64_md5
 
     # 2. איסוף קבצים מהענן (AWS או GCS)
     cloud_files = {}
-    if use_aws:
+    if use_mode_aws:
         cloud_files = get_cloud_files_recursive(bucket_name, prefix)  # הפונקציה שכבר כתבת ל-S3
-    else:
+    elif use_mode_azr:
+        cloud_files = get_azure_files_recursive(bucket_name, prefix)  # ה
+    elif use_mode_clr:
         global gcs_client
         if gcs_client is None: gcs_client = get_storage_client()
         bucket = gcs_client.bucket(bucket_name)
@@ -446,6 +607,10 @@ def check_sync(local_path, bucket_name, prefix="", use_aws=True):
             name = blob.name[len(prefix):].lstrip("/")
             if name: cloud_files[name] = blob.md5_hash
 
+        index_prefix = f".index/{prefix}".replace("//", "/")
+        for blob in bucket.list_blobs(prefix=index_prefix):
+            name = blob.name
+            if name: cloud_files[name] = blob.md5_hash
     # 3. השוואת סטים
     missing_in_cloud = set(local_files) - set(cloud_files)
     missing_locally = set(cloud_files) - set(local_files)
@@ -454,7 +619,11 @@ def check_sync(local_path, bucket_name, prefix="", use_aws=True):
     # לוגיקה לטיפול בקבצים חסרים בענן / ששונו מקומית
     for filename in local_files:
         is_missing = filename in missing_in_cloud
-        is_mismatched = (filename in cloud_files and local_files[filename] != cloud_files[filename])
+        is_json = filename.lower().endswith('.json')
+        is_mismatched = False
+
+        if not is_json:
+            is_mismatched = (filename in cloud_files and local_files[filename] != cloud_files[filename])
 
         if is_missing or is_mismatched:
             if is_mismatched: mismatched_files.append(filename)
@@ -470,7 +639,7 @@ def check_sync(local_path, bucket_name, prefix="", use_aws=True):
 
             if msg.exec_() == QMessageBox.Ok:
                 # שימוש בפונקציה המאוחדת שכתבנו קודם!
-                upload_to_cloud(local_path, filename, base_folder=CLIENT_PREFIX_TO_STRIP, use_aws=use_aws)
+                upload_to_cloud(local_path, filename, base_folder=CLIENT_PREFIX_TO_STRIP)
 
     # לוגיקה לטיפול בקבצים שנמחקו מקומית (מחיקה מהענן)
     for filename in missing_locally:
@@ -485,7 +654,7 @@ def check_sync(local_path, bucket_name, prefix="", use_aws=True):
 
         if msg.exec_() == QMessageBox.Ok:
             # שימוש בפונקציית המחיקה המאוחדת (כולל ה-JSON)
-            delete_from_cloud_with_index(filename, prefix=prefix, use_aws=use_aws)
+            delete_from_cloud_with_index(filename, prefix=prefix, use_mode=True)
 
     sync_status = not missing_locally and not missing_in_cloud and not mismatched_files
     return {
@@ -658,7 +827,7 @@ class GCSBrowserDialog(QtWidgets.QDialog):
 
     def __init__(self, parent=None, initial_path=""):
         super().__init__(parent)
-        provider = "Amazon S3" if USE_AWS else "Google Cloud"
+        provider = "Amazon S3" if use_mode_aws else "Google Cloud"
         self.setWindowTitle(f"Browse {provider} Bucket")
         self.setGeometry(100, 100, 600, 400)
         self.current_path = initial_path.strip('/').replace('\\', '/')
@@ -798,7 +967,7 @@ if __name__ == "__main__":
     # Optional: Set a dark theme or style
     app.setStyle("Fusion")
 
-    print(f"Starting test with USE_AWS={USE_AWS} on Bucket: {BUCKET_NAME}")
+    print(f" on Bucket: {BUCKET_NAME}") #Starting test with use_mode_aws={use_mode_aws}
 
     dialog = GCSBrowserDialog()
     if dialog.exec_() == QtWidgets.QDialog.Accepted:

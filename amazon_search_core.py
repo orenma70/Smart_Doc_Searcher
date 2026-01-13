@@ -7,7 +7,7 @@ import io
 import fitz  # PyMuPDF - כבר נמצא ב-requirements שלך
 from docx import Document  # כבר נמצא ב-requirements שלך
 import pytesseract
-from amazon_search_utilities import match_line, highlight_matches_html, search_in_json_content
+from amazon_search_utilities import match_line, highlight_matches_html, search_in_json_content, run_textract_and_save_index
 from PIL import Image
 import shutil
 import json
@@ -50,25 +50,38 @@ def get_documents_for_path(directory_path):
                     idx_resp = s3.get_object(Bucket=BUCKET_NAME, Key=index_key)
                     index_data = json.loads(idx_resp['Body'].read().decode('utf-8'))
 
-                    # לוקחים רק את העמודים, בלי לבנות full_text
-                    pages = index_data.get("pages") or index_data.get("pages_data", [])
-
-                    if not pages: continue
-
-                    documents.append({
-                        "name": filename,
-                        "full_path": key,
-                        "pages": pages  # שומרים את המבנה המקורי לחיפוש
-                    })
+                    # תיקון 1: וידוא שליפה אחידה של המפתח "pages"
+                    pages = index_data.get("pages", [])
 
                 except s3.exceptions.NoSuchKey:
-                    continue
-                except Exception:
-                    continue
+                    print(f"🔍 Index missing for {filename}. Starting Advanced Textract Analysis...")
+                    try:
+                        # תיקון 2: הפונקציה החדשה מחזירה True רק כשהיא מסיימת את כל 37 העמודים
+                        success = run_textract_and_save_index(BUCKET_NAME, key)
+
+                        if success:
+                            # קריאה מחדש של האינדקס (עכשיו הוא מכיל עברית וגם את כל העמודים)
+                            idx_resp = s3.get_object(Bucket=BUCKET_NAME, Key=index_key)
+                            index_data = json.loads(idx_resp['Body'].read().decode('utf-8'))
+                            pages = index_data.get("pages", [])
+                        else:
+                            continue
+                    except Exception as ocr_e:
+                        print(f"❌ OCR Failed for {key}: {ocr_e}")
+                        continue
+
+                if not pages: continue
+
+                documents.append({
+                    "name": filename,
+                    "full_path": key,
+                    "pages": pages
+                })
         return documents
     except Exception as e:
         print(f"🔥 S3 Error: {str(e)}")
         return []
+
 
 
 def simple_keyword_search(query, directory_path="", mode="any", match_type="partial", show_mode="paragraph"):

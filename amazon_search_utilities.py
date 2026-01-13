@@ -1,4 +1,70 @@
 import re
+import time
+import boto3
+import json
+
+
+def run_textract_and_save_index(bucket_name, document_key):
+    textract = boto3.client('textract', region_name='ap-southeast-2')
+    s3_client = boto3.client('s3', region_name='ap-southeast-2')
+
+    print(f"--- Starting Final Hebrew Fix for {document_key} ---")
+
+    try:
+        # 1. שימוש ב-LAYOUT בלבד (כדי למנוע את שגיאת ה-InvalidParameter)
+        # הוספנו כאן את הטיפול ב-NextToken כדי לוודא שכל 37 העמודים נסרקים
+        response = textract.start_document_analysis(
+            DocumentLocation={'S3Object': {'Bucket': bucket_name, 'Name': document_key}},
+            FeatureTypes=['LAYOUT']
+        )
+        job_id = response['JobId']
+
+        # המתנה לסיום
+        while True:
+            status_resp = textract.get_document_analysis(JobId=job_id)
+            status = status_resp['JobStatus']
+            if status == 'SUCCEEDED': break
+            if status == 'FAILED': raise Exception("Textract failed")
+            time.sleep(5)
+
+        # 2. איסוף כל העמודים (טיפול ב-37 עמודים)
+        pages_data = []
+        next_token = None
+        while True:
+            params = {'JobId': job_id}
+            if next_token: params['NextToken'] = next_token
+
+            result = textract.get_document_analysis(**params)
+
+            for block in result['Blocks']:
+                if block['BlockType'] == 'LINE':
+                    p_num = block.get('Page', 1)
+                    while len(pages_data) < p_num:
+                        pages_data.append({"page": len(pages_data) + 1, "lines": []})
+
+                    if 'Text' in block:
+                        # כאן קורה הקסם: אם זה עדיין ג'יבריש, אנחנו נדע מהלוג
+                        pages_data[p_num - 1]["lines"].append(block['Text'])
+
+            next_token = result.get('NextToken')
+            if not next_token: break
+
+        # 3. השמירה הקריטית - UTF-8 ו-Charset
+        index_key = f".index/{document_key.rsplit('.', 1)[0]}.json"
+        json_body = json.dumps({"pages": pages_data}, ensure_ascii=False).encode('utf-8')
+
+        s3_client.put_object(
+            Bucket=bucket_name,
+            Key=index_key,
+            Body=json_body,
+            ContentType='application/json; charset=utf-8'  # זה מה שמונע ג'יבריש בדפדפן
+        )
+        print(f"✅ Created index for {len(pages_data)} pages with UTF-8 encoding")
+        return True
+
+    except Exception as e:
+        print(f"❌ OCR Error: {str(e)}")
+        return False
 
 
 def search_in_json_content(path, pages_list, words, mode, search_mode):
