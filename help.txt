@@ -5,7 +5,14 @@ git push origin main
 git tag v10.2.0
 git push origin v10.2.0
 
+$ver="v10.2.0"
+$commit=$ver +" Arch: improve Implement Path-Based Caching"
+$commit_str=$ver + $commit
 
+git add .
+git commit -m $commit_str
+git tag -a $ver -m $commit
+git push origin main --tags
 
 
 restore from version source from cloud
