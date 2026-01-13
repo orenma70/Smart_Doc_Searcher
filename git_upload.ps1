@@ -1,7 +1,7 @@
 #Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 # PS C:\Users\orenm\Dropbox\my_doc\Python\Smart_Doc_Searcher> .\git_upload.ps1
 
-$ver = "v23.1.2	"
+$ver = "v23.1.3"
 $description = "Arch: improve Implement Path-Based Caching"
 
 # 2. בניית מחרוזות ה-Commit וה-Tag
