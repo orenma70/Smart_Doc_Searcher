@@ -96,28 +96,24 @@ def simple_keyword_search(query, directory_path="", mode="any", match_type="part
         # אם אנחנו ב-Paragraph Mode, נשתמש בלוגיקה של ה-GUI
         if show_mode == "paragraph":
             matches_html = search_in_json_content(
-                doc["full_path"],
-                doc.get("pages", []),
-                words,
-                mode,
-                match_type
+                doc["full_path"], doc.get("pages", []), words, mode, match_type
             )
-
             if matches_html:
                 results.append({
                     "file": doc["name"],
                     "full_path": doc["full_path"],
-                    "matches_html": matches_html,  # פסקאות חתוכות עם HTML
-                    "match_positions": []  # אופציונלי
+                    "matches_html": matches_html,
+                    "match_positions": []
                 })
-
-        else:  # Line Mode (נשאר כפי שהיה)
+        else:  # Line Mode
             matched_items_html = []
             for page_entry in doc.get("pages", []):
                 p_num = page_entry.get("page", 1)
-                for idx, line in enumerate(page_entry.get("lines", []), 1):
+                for line in page_entry.get("lines", []):
                     if match_line(line, words, mode, match_type):
-                        matched_items_html.append(f"עמוד {p_num}: {highlight_matches_html(line, words, match_type)}")
+                        # הוספת מספר העמוד לכל שורה שנמצאה
+                        highlighted = highlight_matches_html(line, words, match_type)
+                        matched_items_html.append(f"עמוד {p_num}: {highlighted}")
 
             if matched_items_html:
                 results.append({

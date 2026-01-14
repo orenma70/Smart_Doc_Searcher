@@ -82,7 +82,7 @@ def azure_search_endpoint():
         # 2. חיפוש רחב ב-Azure - שימוש בשדות שקיימים בוודאות
         azure_docs = client.search(
             search_text=query,
-            filter=None,  # אנחנו מסננים בפייתון למטה
+            search_mode="all" if mode == "all" else "any",
             select=["content", "metadata_storage_path", "metadata_storage_name"],
             top=100
         )

@@ -3,7 +3,7 @@
 # ==========================================
 
 # 1. הגדרות משתנים
-$ver_name = "v24.9.6"
+$ver_name = "v25.1.0"
 $rg_name = "SmartSearch-RG"
 $acr_name = "smartsearchregoren"
 $app_name = "smart-doc-searcher-api"
