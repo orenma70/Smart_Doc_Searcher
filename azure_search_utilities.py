@@ -1,30 +1,51 @@
-import os
+import os, re
 from typing import Dict, List, Any
-from azure.ai.formrecognizer import DocumentAnalysisClient
-from azure.core.credentials import AzureKeyCredential
-from azure.storage.blob import BlobServiceClient
 from config_reader import BUCKET_NAME  # וודא שזה מיובא
 
+from azure.storage.blob import BlobServiceClient
+from azure.search.documents import SearchClient
+from azure.core.credentials import AzureKeyCredential
 
-def get_azure_client():
-    """Initializes and returns the Azure Blob Storage client."""
-    try:
-        # שים לב: וודא שהשם של משתנה הסביבה תואם למה שהגדרת ב-App Runner/OS
-        connection_string = os.getenv("Azuresmartsearch3key1conn")
+class AzureManager:
+    def __init__(self):
+        # טעינת המפתחות ממשתני הסביבה
+        self.blob_conn_str = os.getenv("azuresmartsearch3key1conn")
+        self.search_endpoint = "https://smart-search-service3.search.windows.net" #os.getenv("AZURE_SEARCH_ENDPOINT")
+        self.search_key = os.getenv("azure-key-search")
+        self.index_name = os.getenv("AZURE_SEARCH_INDEX", "azureblob-index2")
 
-        if not connection_string:
-            print("FATAL: AZURE_STORAGE_CONNECTION_STRING is not set.")
+    def get_blob_service(self):
+        """מחליף את get_azure_client הישנה - לצורך העלאת קבצים"""
+        try:
+            if not self.blob_conn_str:
+                print("⚠️ Missing Blob Connection String")
+                return None
+            return BlobServiceClient.from_connection_string(self.blob_conn_str)
+        except Exception as e:
+            print(f"❌ Error initializing Blob Client: {e}")
             return None
 
-        return BlobServiceClient.from_connection_string(connection_string)
-    except Exception as e:
-        print(f"FATAL: Could not initialize Azure client. Error: {e}")
-        return None
+    def get_search_client(self):
+        """מחליף את get_azure_search_client - לצורך חיפוש ב-Endpoint"""
+        try:
+            if not all([self.search_endpoint, self.search_key]):
+                print("⚠️ Missing Search Credentials (Endpoint or Key)")
+                return None
+            return SearchClient(
+                self.search_endpoint,
+                self.index_name,
+                AzureKeyCredential(self.search_key)
+            )
+        except Exception as e:
+            print(f"❌ Error initializing Search Client: {e}")
+            return None
 
+# יצירת המופע שבו נשתמש בכל האפליקציה
+azure_provider = AzureManager()
 
 def browse_azure_path_logic(prefix: str) -> Dict[str, List[str]]:
     """Azure implementation: returns a list of virtual folders."""
-    client = get_azure_client()
+    client = azure_provider.get_blob_service()
     if not client:
         return {"folders": []}
 
@@ -53,3 +74,74 @@ def browse_azure_path_logic(prefix: str) -> Dict[str, List[str]]:
     except Exception as e:
         print(f"Azure Browse Error: {e}")
         return {"folders": []}
+
+
+def match_line(text, words, mode="any", match_type="partial"):
+    if not words: return False
+    # Handle Full vs Partial match
+    if match_type == "full":
+        patterns = [rf'\b{re.escape(w)}\b' for w in words]
+    else:
+        patterns = [re.escape(w) for w in words]
+
+    # Handle All vs Any logic
+    if mode == "all":
+        return all(re.search(p, text, re.IGNORECASE) for p in patterns)
+    return any(re.search(p, text, re.IGNORECASE) for p in patterns)
+
+
+def highlight_matches_html(text, words, match_type="partial"):
+    highlighted = text
+    for w in words:
+        pattern = rf'\b{re.escape(w)}\b' if match_type == "full" else re.escape(w)
+        highlighted = re.sub(pattern, lambda m: f"<mark>{m.group()}</mark>", highlighted, flags=re.IGNORECASE)
+    return highlighted
+
+
+def split_into_paragraphs(text):
+    return [p.strip() for p in text.split('\n\n') if p.strip()]
+
+
+def find_paragraph_position_in_pages(paragraph, pages):
+    # ניקוי רווחים מיותרים מהפסקה לחיפוש גמיש יותר
+    clean_para = re.sub(r'\s+', ' ', paragraph).strip()
+
+    for page_entry in pages:
+        full_page_text = " ".join(page_entry.get("lines", []))
+        clean_page = re.sub(r'\s+', ' ', full_page_text)
+
+        if clean_para in clean_page:
+            return page_entry.get("page", 1), 1
+    return 1, 1
+
+
+def search_in_json_content(path, pages_list, words, mode, search_mode):
+    results = []
+    for p_idx, page_data in enumerate(pages_list):
+        pnum = page_data.get("page_number") or page_data.get("page", p_idx + 1)
+        lines = page_data.get("lines", [])
+        l = len(lines)
+        i = 0
+        while i < l:
+            ln = lines[i]
+            if match_line(ln, words, 'any', search_mode):  # שימוש ב-match_line הקיים שלך
+                start_index = max(0, i - 1)
+                end_index = min(i + 2, l)
+                context_lines = lines[start_index:end_index]
+                context_text = " ".join(context_lines)
+
+                if match_line(context_text, words, mode, search_mode):
+                    # יצירת ה-HTML המעוצב
+                    pre = f"<span style='color:blue;'>— עמוד {pnum} — שורות {start_index + 1}-{end_index}</span>"
+                    path_url = path.replace('\\', '/')
+                    # הלינק מותאם למה שה-GUI שלך מצפה
+                    open_link = f"<a href='filepage:///{path_url}?page={pnum}' style='color:green; text-decoration: none;'>[פתח קובץ]</a>"
+
+                    full_paragraph = (
+                            f"{path}  {pre} {open_link}<br><br>" +
+                            "<br>".join(context_lines).replace(".₪", "₪.").replace(",₪", "₪,") + "<br>"
+                    )
+                    results.append(full_paragraph)
+                    i += 2
+            i += 1
+    return results

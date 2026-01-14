@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional, Union
 # We assume PyQt5 is used based on QFileDialog in browse_directory
 from PyQt5 import QtWidgets, QtCore, QtGui
 from search_utilities import get_storage_client
-from azure_search_utilities import browse_azure_path_logic, get_azure_client
+from azure_search_utilities import browse_azure_path_logic, azure_provider
 import time
 import hashlib
 import binascii, base64
@@ -48,7 +48,7 @@ KMS_KEY_ARN = "arn:aws:kms:ap-southeast-2:038715112888:key/82ae7f3a-eb41-4f29-bd
 
 def get_azure_files_recursive(container_name, prefix):
     # התחברות ללקוח (יש להגדיר CONNECTION_STRING במערכת)
-    connection_string = os.getenv("Azuresmartsearch3key1conn")
+    connection_string = os.getenv("azuresmartsearch3key1conn")
     blob_service_client = BlobServiceClient.from_connection_string(connection_string)
     container_client = blob_service_client.get_container_client(container_name)
 
@@ -153,7 +153,7 @@ def delete_from_cloud_with_index(filename, prefix=""):
             print(f"🗑️ GCS: Deleted {target_key} and its index.")
         elif use_mode_azr:
             # --- מחיקה מ-Microsoft Azure Blob Storage ---
-            client = get_azure_client()
+            client = azure_provider.get_search_client()
             container_client = client.get_container_client(BUCKET_NAME)
 
             # מחיקה של הקובץ המקורי
@@ -280,11 +280,27 @@ def upload_to_cloud(local_folder, filename, base_folder):
     os.makedirs(os.path.dirname(local_index_path), exist_ok=True)
 
     try:
-        with open(pdf_path, "rb") as f:
-            pdf_bytes = f.read()
+        pages_data = None
+        if os.path.exists(local_index_path):
+            try:
+                with open(local_index_path, "r", encoding="utf-8") as f:
+                    pages_data = json.load(f)
+                    was_ocr_needed = True
+                    with open(pdf_path, "rb") as f:
+                        pdf_bytes = f.read()
 
-        file_ext = os.path.splitext(filename)[1].lower()
-        pages_data, was_ocr_needed = extract_text_for_indexing(pdf_bytes, file_ext)
+                print(f"--- [Fast Path] Loaded existing index for {filename} ---")
+            except Exception as e:
+                print(f"Error reading existing index: {e}, re-indexing...")
+
+        # --- רק אם לא מצאנו JSON מוכן, נריץ את החילוץ הכבד ---
+        if pages_data is None:
+
+            with open(pdf_path, "rb") as f:
+                pdf_bytes = f.read()
+
+            file_ext = os.path.splitext(filename)[1].lower()
+            pages_data, was_ocr_needed = extract_text_for_indexing(pdf_bytes, file_ext)
 
         # Hash של ה-PDF
         pdf_hex_md5 = hashlib.md5(pdf_bytes).hexdigest()
@@ -344,7 +360,7 @@ def upload_to_cloud(local_folder, filename, base_folder):
 
             print(f"✅ Uploaded to Google: {filename} (JSON MD5: {json_hex_md5})")
         elif use_mode_azr:
-            client = get_azure_client()
+            client = azure_provider.get_search_client()
             # מקבלים גישה לקונטיינר
             container_client = client.get_container_client(BUCKET_NAME)
 
@@ -564,41 +580,35 @@ def md5_of_file(path):
 
 def check_sync(local_path, bucket_name, prefix="", use_mode=True):
     """
-    פונקציית סנכרון מאוחדת ל-AWS ו-GCS.
-    משווה קבצים מקומיים מול הענן ומציעה עדכון/מחיקה.
+    גרסה מעודכנת המבוססת על הקוד המקורי - שואלת פעם אחת על הכל.
     """
-    # 1. איסוף קבצים מקומיים וה-Hashes שלהם
+    # 1. איסוף קבצים מקומיים וה-Hashes שלהם (ללא שינוי)
     local_files = {}
     for root, _, files in os.walk(local_path):
         for f in files:
             if f.startswith("$") or f.startswith("~$"): continue
             full_path = os.path.join(root, f)
             rel_path = os.path.relpath(full_path, local_path).replace("\\", "/")
-
-            # מקבלים Hex ל-AWS ו-Base64 ל-GCS
             hex_md5, b64_md5 = get_local_hashes(full_path)
             local_files[rel_path] = hex_md5 if use_mode_aws else b64_md5
 
-    index_root = os.path.join(CLIENT_PREFIX_TO_STRIP , ".index")
+    index_root = os.path.join(CLIENT_PREFIX_TO_STRIP, ".index")
     if os.path.exists(index_root):
         for root, _, files in os.walk(index_root):
             for f in files:
                 if not f.endswith(".json"): continue
-
                 full_path = os.path.join(root, f)
-                # שימוש ב-local_path כבסיס כדי שהנתיב יתחיל ב-".index/..."
-
                 rel_to_index = os.path.relpath(full_path, index_root).replace("\\", "/")
                 rel_path = f".index/{rel_to_index}"
                 hex_md5, b64_md5 = get_local_hashes(full_path)
                 local_files[rel_path] = hex_md5 if use_mode_aws else b64_md5
 
-    # 2. איסוף קבצים מהענן (AWS או GCS)
+    # 2. איסוף קבצים מהענן (ללא שינוי)
     cloud_files = {}
     if use_mode_aws:
-        cloud_files = get_cloud_files_recursive(bucket_name, prefix)  # הפונקציה שכבר כתבת ל-S3
+        cloud_files = get_cloud_files_recursive(bucket_name, prefix)
     elif use_mode_azr:
-        cloud_files = get_azure_files_recursive(bucket_name, prefix)  # ה
+        cloud_files = get_azure_files_recursive(bucket_name, prefix)
     elif use_mode_clr:
         global gcs_client
         if gcs_client is None: gcs_client = get_storage_client()
@@ -606,55 +616,62 @@ def check_sync(local_path, bucket_name, prefix="", use_mode=True):
         for blob in bucket.list_blobs(prefix=prefix):
             name = blob.name[len(prefix):].lstrip("/")
             if name: cloud_files[name] = blob.md5_hash
-
         index_prefix = f".index/{prefix}".replace("//", "/")
         for blob in bucket.list_blobs(prefix=index_prefix):
             name = blob.name
             if name: cloud_files[name] = blob.md5_hash
-    # 3. השוואת סטים
+
+    # 3. השוואת סטים (הלוגיקה המקורית שלך)
     missing_in_cloud = set(local_files) - set(cloud_files)
     missing_locally = set(cloud_files) - set(local_files)
+
+    # רשימות לאיסוף הקבצים במקום שאלות מיידיות
+    files_to_upload = []
     mismatched_files = []
 
-    # לוגיקה לטיפול בקבצים חסרים בענן / ששונו מקומית
+    # לוגיקה לזיהוי קבצים להעלאה/עדכון
     for filename in local_files:
         is_missing = filename in missing_in_cloud
         is_json = filename.lower().endswith('.json')
         is_mismatched = False
-
         if not is_json:
             is_mismatched = (filename in cloud_files and local_files[filename] != cloud_files[filename])
 
         if is_missing or is_mismatched:
-            if is_mismatched: mismatched_files.append(filename)
+            files_to_upload.append(filename)
+            if is_mismatched:
+                mismatched_files.append(filename)
 
-            title = "Sync Mismatch" if is_mismatched else "Missing File"
-            text = f"File {filename} needs update."
 
-            msg = QMessageBox()
-            msg.setIcon(QMessageBox.Question)
-            msg.setWindowTitle(title if isLTR else "סנכרון קבצים")
-            msg.setText(text if isLTR else f"הקובץ {filename} דורש עדכון בענן.")
-            msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
-
-            if msg.exec_() == QMessageBox.Ok:
-                # שימוש בפונקציה המאוחדת שכתבנו קודם!
+    # --- שאלה אחת וביצוע העלאה ---
+    if files_to_upload:
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Question)
+        msg.setWindowTitle("סנכרון קבצים" if not isLTR else "Sync Files")
+        msg.setText(
+            f"נמצאו {len(files_to_upload)} קבצים להעלאה/עדכון. לבצע?" if not isLTR else f"Update {len(files_to_upload)} files?")
+        msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+        if msg.exec_() == QMessageBox.Ok:
+            for filename in files_to_upload:
                 upload_to_cloud(local_path, filename, base_folder=CLIENT_PREFIX_TO_STRIP)
 
-    # לוגיקה לטיפול בקבצים שנמחקו מקומית (מחיקה מהענן)
-    for filename in missing_locally:
-        if filename.startswith(".index/"): continue  # לא מוחקים את תיקיית האינדקס ישירות
+                if filename in missing_in_cloud:
+                    missing_in_cloud.remove(filename)  # הקובץ כבר לא חסר בענן
 
+                if filename in mismatched_files:
+                    mismatched_files.remove(filename)  # הקו
+    # --- שאלה אחת וביצוע מחיקה ---
+    files_to_delete = [f for f in missing_locally if not f.startswith(".index/")]
+    if files_to_delete:
         msg = QMessageBox()
         msg.setIcon(QMessageBox.Warning)
-        msg.setWindowTitle("Delete?" if isLTR else "מחיקה?")
+        msg.setWindowTitle("מחיקה מהענן" if not isLTR else "Cloud Delete")
         msg.setText(
-            f"File {filename} deleted locally. Delete from cloud?" if isLTR else f"קובץ {filename} נמחק מקומית. למחוק מהענן?")
+            f"נמצאו {len(files_to_delete)} קבצים למחיקה מהענן. לבצע?" if not isLTR else f"Delete {len(files_to_delete)} files from cloud?")
         msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
-
         if msg.exec_() == QMessageBox.Ok:
-            # שימוש בפונקציית המחיקה המאוחדת (כולל ה-JSON)
-            delete_from_cloud_with_index(filename, prefix=prefix, use_mode=True)
+            for filename in files_to_delete:
+                delete_from_cloud_with_index(filename, prefix=prefix, use_mode=True)
 
     sync_status = not missing_locally and not missing_in_cloud and not mismatched_files
     return {

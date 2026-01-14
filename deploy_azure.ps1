@@ -3,7 +3,7 @@
 # ==========================================
 
 # 1. הגדרות משתנים
-$ver_name = "v23.1.1"
+$ver_name = "v24.9.6"
 $rg_name = "SmartSearch-RG"
 $acr_name = "smartsearchregoren"
 $app_name = "smart-doc-searcher-api"
@@ -13,7 +13,7 @@ Write-Host "--- Starting Deploy for Version: $ver_name ---" -ForegroundColor Cya
 
 # 2. בניית ה-Image בתוך ה-ACR
 Write-Host "--- Step 1: Building Docker Image in Azure ---" -ForegroundColor Yellow
-az acr build --registry $acr_name --image "smart-doc-api:${ver_name}" --file Dockerfile_Azure .
+az acr build --registry $acr_name --image "smart-doc-api:${ver_name}" --file Dockerfile_azure .
 
 if ($LASTEXITCODE -ne 0) { 
     Write-Host "Build Failed! Exiting..." -ForegroundColor Red
@@ -22,11 +22,21 @@ if ($LASTEXITCODE -ne 0) {
 
 # 3. עדכון ה-Container App - שים לב לתוספת ה-set-env-vars
 Write-Host "--- Step 2: Updating Container App to $ver_name ---" -ForegroundColor Yellow
+
+$envVars = @(
+    "APP_VERSION=$ver_name",
+    "AZURE_SEARCH_INDEX=azureblob-index2",                # השם הנכון שמצאת!
+        "azure-key-search=secretref:azure-key-search",       # שימוש ב-Secret הקיים
+    "azuresmartsearch3key1conn=secretref:azuresmartsearch3key1conn" # תיקון השם ל-A גדולה
+)
+
+
 az containerapp update `
     --name $app_name `
     --resource-group $rg_name `
     --image $image_full_name `
-    --set-env-vars APP_VERSION=$ver_name  # <--- זה מה שחסר לך!
+    --set-env-vars $envVars
+
 
 if ($LASTEXITCODE -ne 0) { 
     Write-Host "Update Failed!" -ForegroundColor Red
