@@ -1,7 +1,7 @@
 #Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 # PS C:\Users\orenm\Dropbox\my_doc\Python\Smart_Doc_Searcher> .\git_upload.ps1
 
-$ver = "v24.9.6"
+$ver = "v25.1.0"
 $description = "Azure supports key words search"
 
 # 2. בניית מחרוזות ה-Commit וה-Tag

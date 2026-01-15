@@ -47,6 +47,7 @@ if cloud_storage_provider == "Amazon":
     API_get_version_url = API_main + read_setup("API_get_version_url")
     API_cache_status_url = API_main + read_setup("API_cache_status_url")
     BUCKET_NAME = read_setup("BUCKET_NAME_Amazon")
+    CLIENT_PREFIX_TO_STRIP = read_setup("CLIENT_PREFIX_TO_STRIP_Amazon")
 elif cloud_storage_provider == "Google":
     API_main = read_setup("API_main_google")
     API_simple_search_url = API_main + read_setup("API_simple_search_url")
@@ -54,6 +55,7 @@ elif cloud_storage_provider == "Google":
     API_get_version_url = API_main + read_setup("API_cache_status_url")
     API_cache_status_url = API_main + read_setup("API_cache_status_url")
     BUCKET_NAME = read_setup("BUCKET_NAME_Google")
+    CLIENT_PREFIX_TO_STRIP = read_setup("CLIENT_PREFIX_TO_STRIP_Google")
 elif cloud_storage_provider == "Microsoft":
     API_main = read_setup("API_main_microsoft")
     API_simple_search_url = API_main + read_setup("API_simple_search_url")
@@ -61,10 +63,11 @@ elif cloud_storage_provider == "Microsoft":
     API_get_version_url = API_main + read_setup("API_get_version_url")
     API_cache_status_url = API_main + read_setup("API_cache_status_url")
     BUCKET_NAME=read_setup("BUCKET_NAME_Microsoft")
+    CLIENT_PREFIX_TO_STRIP = read_setup("CLIENT_PREFIX_TO_STRIP_Microsoft")
 else:
     BUCKET_NAME = ""
 
-CLIENT_PREFIX_TO_STRIP=read_setup("CLIENT_PREFIX_TO_STRIP")
+
 LOCAL_MODE=read_setup("LOCAL_MODE")
 
 

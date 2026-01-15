@@ -65,7 +65,6 @@ def azure_search_endpoint():
 
     print(f"--- 🚀 New Search Request ---")
     print(f"🔍 Query: '{query}'")
-    print(f"📂 Folder Filter: '{directory_path}'")
 
     if not query:
         return jsonify({"results": [], "count": 0}), 200
@@ -74,15 +73,19 @@ def azure_search_endpoint():
     results = []
 
     try:
+        # שימוש ב-provider הקיים שלך בדיוק כפי שביקשת
         client = azure_provider.get_search_client()
 
-        # 1. ביטול ה-filter_query ב-Azure כדי למנוע את שגיאת ה-is_searchable
+        if client is None:
+            return jsonify({"error": "Search client could not be initialized. Check environment variables."}), 500
+
         print(f"📡 Calling Azure AI Search for: '{query}'...")
 
-        # 2. חיפוש רחב ב-Azure - שימוש בשדות שקיימים בוודאות
+        # ביצוע החיפוש ב-Azure
         azure_docs = client.search(
             search_text=query,
             search_mode="all" if mode == "all" else "any",
+            # מוודאים ששולפים את השדות הנכונים מהאינדקס
             select=["content", "metadata_storage_path", "metadata_storage_name"],
             top=100
         )
@@ -90,56 +93,45 @@ def azure_search_endpoint():
         doc_count = 0
         for res in azure_docs:
             encoded_path = res.get("metadata_storage_path") or ""
-            full_path = decode_azure_path(encoded_path)
+            # כאן הפונקציה decode_azure_path צריכה להיות מוגדרת אצלך בקוד
+            full_path = decode_azure_path(encoded_path) if 'decode_azure_path' in globals() else encoded_path
             file_name = res.get("metadata_storage_name") or "Unknown"
 
-            # 3. סינון תיקייה ידני (למשל 'גירושין/2025')
+            # סינון תיקייה ידני
             if directory_path and directory_path != "/":
                 clean_dir = directory_path.strip('/')
-                # בדיקה אם נתיב הקובץ מכיל את התיקייה המבוקשת
                 if clean_dir not in full_path:
-                    continue  # מדלג לקובץ הבא אם אין התאמה לתיקייה
+                    continue
 
             doc_count += 1
-            print(f"📄 [{doc_count}] Found & Matched Folder: {file_name}")
-            print(f"   📍 Path: {full_path}")
-
-            # 4. עיבוד תוכן המסמך
             raw_text = res.get("content") or ""
             if not raw_text:
                 continue
 
+            # עיבוד הטקסט לשורות
             lines = [ln.strip() for ln in raw_text.split('\n') if ln.strip()]
 
-            doc = {
-                "name": file_name,
-                "full_path": full_path,
-                "pages": [{"page": 1, "lines": lines}]
-            }
-
-
-            # לוגיקת החיפוש הפנימית (ללא שינוי)
+            # לוגיקת החיפוש וההדגשה שלך (ללא שינוי)
             if show_mode == "paragraph":
                 matches_html = search_in_json_content(
-                    doc["full_path"], doc.get("pages", []), words, mode, match_type
+                    full_path, [{"page": 1, "lines": lines}], words, mode, match_type
                 )
                 if matches_html:
                     results.append({
-                        "file": doc["name"],
-                        "full_path": doc["full_path"],
+                        "file": file_name,
+                        "full_path": full_path,
                         "matches_html": matches_html
                     })
             else:
                 matched_items_html = []
-                for page_entry in doc.get("pages", []):
-                    for line in page_entry.get("lines", []):
-                        if match_line(line, words, mode, match_type):
-                            matched_items_html.append(highlight_matches_html(line, words, match_type))
+                for line in lines:
+                    if match_line(line, words, mode, match_type):
+                        matched_items_html.append(highlight_matches_html(line, words, match_type))
 
                 if matched_items_html:
                     results.append({
-                        "file": doc["name"],
-                        "full_path": doc["full_path"],
+                        "file": file_name,
+                        "full_path": full_path,
                         "matches_html": matched_items_html
                     })
 

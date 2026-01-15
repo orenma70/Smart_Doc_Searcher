@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional, Union
 # We assume PyQt5 is used based on QFileDialog in browse_directory
 from PyQt5 import QtWidgets, QtCore, QtGui
 from search_utilities import get_storage_client
-from azure_search_utilities import browse_azure_path_logic, azure_provider
+from azure_search_utilities import browse_azure_path_logic
 import time
 import hashlib
 import binascii, base64
@@ -153,9 +153,10 @@ def delete_from_cloud_with_index(filename, prefix=""):
             print(f"🗑️ GCS: Deleted {target_key} and its index.")
         elif use_mode_azr:
             # --- מחיקה מ-Microsoft Azure Blob Storage ---
-            client = azure_provider.get_search_client()
-            container_client = client.get_container_client(BUCKET_NAME)
 
+            connection_string = os.getenv("azuresmartsearch3key1conn")
+            blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+            container_client = blob_service_client.get_container_client(BUCKET_NAME)
             # מחיקה של הקובץ המקורי
             blob_file = container_client.get_blob_client(target_key)
             if blob_file.exists():
@@ -360,9 +361,9 @@ def upload_to_cloud(local_folder, filename, base_folder):
 
             print(f"✅ Uploaded to Google: {filename} (JSON MD5: {json_hex_md5})")
         elif use_mode_azr:
-            client = azure_provider.get_search_client()
-            # מקבלים גישה לקונטיינר
-            container_client = client.get_container_client(BUCKET_NAME)
+            connection_string = os.getenv("azuresmartsearch3key1conn")
+            blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+            container_client = blob_service_client.get_container_client(BUCKET_NAME)
 
             # 1. העלאת קובץ ה-PDF
             blob_file = container_client.get_blob_client(relative_file_path)
@@ -578,7 +579,7 @@ def md5_of_file(path):
     return base64.b64encode(binascii.unhexlify(hash_md5.hexdigest())).decode("utf-8")
 
 
-def check_sync(local_path, bucket_name, prefix="", use_mode=True):
+def check_sync(local_path, bucket_name, prefix=""):
     """
     גרסה מעודכנת המבוססת על הקוד המקורי - שואלת פעם אחת על הכל.
     """
@@ -671,7 +672,7 @@ def check_sync(local_path, bucket_name, prefix="", use_mode=True):
         msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
         if msg.exec_() == QMessageBox.Ok:
             for filename in files_to_delete:
-                delete_from_cloud_with_index(filename, prefix=prefix, use_mode=True)
+                delete_from_cloud_with_index(filename, prefix=prefix)
 
     sync_status = not missing_locally and not missing_in_cloud and not mismatched_files
     return {

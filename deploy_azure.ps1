@@ -1,6 +1,7 @@
 # ==========================================
 # Azure Deployment Script - Smart Doc Searcher
 # ==========================================
+RUN echo "Force fresh build v30.0.0"
 
 # 1. הגדרות משתנים
 $ver_name = "v25.1.0"

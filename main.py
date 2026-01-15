@@ -67,8 +67,8 @@ LATIN_LETTER_PATTERN = re.compile(r'[a-zA-Z]')
 sequence_pattern = re.compile(r'\d+')
 LATIN_LETTER_PATTERNnNum = re.compile(r'[a-zA-Z]+|\d+')
 
-from config_reader import BUCKET_NAME, API_search_url, API_simple_search_url, API_get_version_url, \
-    CLIENT_PREFIX_TO_STRIP, cloud_storage_provider
+from config_reader import (BUCKET_NAME, API_search_url, API_simple_search_url, API_get_version_url, API_cache_status_url,
+    CLIENT_PREFIX_TO_STRIP)
 
 
 # Function to implement in your class:
@@ -192,6 +192,7 @@ def on_search_button_clicked(self, query, directory_path ,force_chat = False):
                 query += " please indicate in which documents you found the answer "
             else:
                 query += " - (פרט היכן מצאת את המידע) "
+
             if self.cloud_storage_provider == "Google":
                 url = API_search_url
                 payload = {
@@ -231,6 +232,53 @@ def on_search_button_clicked(self, query, directory_path ,force_chat = False):
                 )
 
                 return response['output']['text']
+
+            elif self.cloud_storage_provider == "Microsoft":
+                from azure.core.credentials import AzureKeyCredential
+                from azure.search.documents import SearchClient
+                from azure.search.documents.models import VectorizableTextQuery
+
+                # 1. Connection settings using your new saved keys
+                # Note: Use your Search Service URL (ends in search.windows.net)
+                endpoint = "https://smartsearch3-openai.openai.azure.com" #os.environ.get("AZURE_SEARCH_ENDPOINT")
+                index_name = os.getenv("AZURE_SEARCH_INDEX", "ocr-index")
+                query_key = os.environ.get("MS-AZURE_SEARCH_KEY")
+
+                # 2. Connect to Azure Search
+                search_client = SearchClient(
+                    endpoint=endpoint,
+                    index_name=index_name,
+                    credential=AzureKeyCredential(query_key)
+                )
+
+                # 3. Hybrid Search Logic (Text + Embedding)
+                # This uses the embedding model to "understand" the meaning of your query
+                vector_query = VectorizableTextQuery(
+                    text=query,
+                    k_nearest_neighbors=3,
+                    fields="contentVector",  # The field name in your index for embeddings
+                    exhaustive=True
+                )
+
+                results = search_client.search(
+                    search_text=query,
+                    #vector_queries=[vector_query],
+                    select=["content", "metadata_storage_name"],
+                    top=5
+                )
+
+                # 4. Processing results for the Agent
+                search_results = []
+                for result in results:
+                    search_results.append({
+                        "text": result["content"],
+                        "source": result["metadata_storage_name"],
+                        "score": result["@search.score"]
+                    })
+
+                response = {"results": search_results}
+
+
         else:
 
             if self.all_word_search_radio.isChecked():

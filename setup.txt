@@ -18,7 +18,13 @@ BUCKET_NAME_Microsoft=oren-smart-search-docs-azure  # smartsearch3
 # AWS : Admin https://038715112888.signin.aws.amazon.com/console
 # arn:aws:iam::038715112888:user/Admin
 # AKIAQSA4ZXW4GOJLRWMB  0ZF1B...
-CLIENT_PREFIX_TO_STRIP=C:/a/מצרפי
+
+
+CLIENT_PREFIX_TO_STRIP_Amazon=C:/a/מצרפי
+CLIENT_PREFIX_TO_STRIP_Google=C:/a/מצרפי
+CLIENT_PREFIX_TO_STRIP_Microsoft=C:/a/Azure
+
+
 
 LOCAL_MODE=False  # HD or Cloud
 Language=Hebrew  # Hebrew English

@@ -15,5 +15,3 @@ azure-search-documents
 azure-core
 azure-identity
 pdf2image
-
-
