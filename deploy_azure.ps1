@@ -1,10 +1,10 @@
 # ==========================================
 # Azure Deployment Script - Smart Doc Searcher
 # ==========================================
-RUN echo "Force fresh build v30.0.0"
+
 
 # 1. הגדרות משתנים
-$ver_name = "v25.1.0"
+$ver_name = "v26.1.0"
 $rg_name = "SmartSearch-RG"
 $acr_name = "smartsearchregoren"
 $app_name = "smart-doc-searcher-api"
@@ -31,6 +31,10 @@ $envVars = @(
     "azuresmartsearch3key1conn=secretref:azuresmartsearch3key1conn" # תיקון השם ל-A גדולה
 )
 
+az containerapp revision set-mode `
+    --name $app_name `
+    --resource-group $rg_name `
+    --mode single
 
 az containerapp update `
     --name $app_name `

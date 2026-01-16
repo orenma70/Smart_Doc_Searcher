@@ -1,15 +1,25 @@
 #Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 # PS C:\Users\orenm\Dropbox\my_doc\Python\Smart_Doc_Searcher> .\git_upload.ps1
 
-$ver = "v25.1.0"
-$description = "Azure supports key words search"
+# 1. הצגת סטטוס נוכחי
+git status
 
-# 2. בניית מחרוזות ה-Commit וה-Tag
+# 2. בקשת אישור מהמשתמש
+$confirmation = Read-Host "Keep on commit and push to Azure? (y/n)"
+if ($confirmation -ne 'y') {
+    Write-Host "Operation cancelled by user." -ForegroundColor Yellow
+    exit
+}
+
+
+# 3. הגדרות גרסה
+$ver = "v26.1.0"
+$description = "Azure supports key words search"
 $commit_msg = "$ver $description"
 
 Write-Host "--- Preparing to Push Version: $ver ---" -ForegroundColor Cyan
 
-# 3. ביצוע הפעולות ב-Git
+# 4. ביצוע הפעולות ב-Git
 git add .
 
 # ביצוע Commit (רק אם יש שינויים)

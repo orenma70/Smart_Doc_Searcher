@@ -234,6 +234,8 @@ def on_search_button_clicked(self, query, directory_path ,force_chat = False):
                 return response['output']['text']
 
             elif self.cloud_storage_provider == "Microsoft":
+
+
                 from azure.core.credentials import AzureKeyCredential
                 from azure.search.documents import SearchClient
                 from azure.search.documents.models import VectorizableTextQuery

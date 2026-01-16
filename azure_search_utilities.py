@@ -117,45 +117,6 @@ def find_paragraph_position_in_pages(paragraph, pages):
             return page_entry.get("page", 1), 1
     return 1, 1
 
-'''
-def get_azure_ai_response(query):
-    # This setup connects the AI model directly to your Blob storage index
-    endpoint = "https://your-resource-name.openai.azure.com/"
-    api_key = os.environ.get("AZURE_OPENAI_KEY")
-    #https: // orenma - smartsearch - resource.services.ai.azure.com / api / projects / orenma - smartsearch
-    client = openai.AzureOpenAI(
-        base_url=f"{endpoint}/openai/deployments/gpt-4o/extensions",
-        api_key=api_key,
-        api_version="2024-02-15-preview",
-    )
-
-    response = client.chat.completions.create(
-        model="gpt-4o",  # Your deployment name
-        messages=[{"role": "user", "content": query}],
-        extra_body={
-            "data_sources": [
-                {
-                    "type": "azure_search",
-                    "parameters": {
-                        "endpoint": "https://smart-search-service3.search.windows.net",
-                        "index_name": os.getenv("AZURE_SEARCH_INDEX", "ocr-index"),
-                        "authentication": {
-                            "type": "api_key",
-                            "key": os.environ.get("AZURE_SEARCH_KEY")
-                        },
-                        "query_type": "vector_simple_hybrid",  # Best for finding JSON/Docs
-                        "in_scope": True,
-                        "strictness": 3,
-                        "top_n_documents": 5
-                    }
-                }
-            ]
-        }
-    )
-
-    return response.choices[0].message.content
-'''
-
 def search_in_json_content(path, pages_list, words, mode, search_mode):
     results = []
     for p_idx, page_data in enumerate(pages_list):

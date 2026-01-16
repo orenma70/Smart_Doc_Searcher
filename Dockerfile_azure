@@ -42,5 +42,4 @@ COPY azure_search_utilities.py .
 EXPOSE 8080
 
 # 6. הרצת השרת
-# שים לב: שיניתי את הקובץ המורץ ל-azure_search_core (כי אנחנו ב-Azure עכשיו)
 CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "8", "--timeout", "120", "azure_search_core:app"]
