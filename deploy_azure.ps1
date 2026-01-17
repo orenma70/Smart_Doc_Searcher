@@ -4,7 +4,7 @@
 
 
 # 1. הגדרות משתנים
-$ver_name = "v26.1.0"
+$ver_name = "v27.6.0"
 $rg_name = "SmartSearch-RG"
 $acr_name = "smartsearchregoren"
 $app_name = "smart-doc-searcher-api"
@@ -28,6 +28,7 @@ $envVars = @(
     "APP_VERSION=$ver_name",
     "AZURE_SEARCH_INDEX=azureblob-index2",                # השם הנכון שמצאת!
         "azure-key-search=secretref:azure-key-search",       # שימוש ב-Secret הקיים
+    "AZURE_OPENAI_KEY=secretref:azure-openai-key3",
     "azuresmartsearch3key1conn=secretref:azuresmartsearch3key1conn" # תיקון השם ל-A גדולה
 )
 

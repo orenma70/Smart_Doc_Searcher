@@ -1,7 +1,7 @@
 
 
 # ... (משתנים אחרים כמו BUCKET_NAME) 
-cloud_storage_provider=Amazon # Amazon Google
+cloud_provider=Amazon # Amazon Google
 
 BUCKET_NAME_Amazon=oren-smart-search-docs-amazon2
 BUCKET_NAME_Google=oren-smart-search-docs-1205

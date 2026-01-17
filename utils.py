@@ -1,4 +1,16 @@
-import datetime
+import datetime, requests
+
+
+def get_remote_version(api_url):
+    try:
+        # פנייה ל-Endpoint החדש שיצרנו
+        response = requests.get(f"{api_url}", timeout=20)
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("version", "Unknown")
+    except Exception as e:
+        return f"Error: {e}"
+    return "Offline"
 
 def get_outlook_date(timestamp):
     # Outlook needs YYYY-MM-DD for KQL $search

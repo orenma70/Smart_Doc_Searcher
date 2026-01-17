@@ -1,6 +1,5 @@
 import os, re
-from typing import Dict, List, Any
-from config_reader import BUCKET_NAME  # וודא שזה מיובא
+from typing import Dict, List
 from azure.storage.blob import BlobServiceClient
 from azure.search.documents import SearchClient
 from azure.core.credentials import AzureKeyCredential
@@ -46,13 +45,23 @@ class AzureManager:
 # יצירת המופע שבו נשתמש בכל האפליקציה
 azure_provider = AzureManager()
 
-def browse_azure_path_logic(prefix: str) -> Dict[str, List[str]]:
+def browse_azure_path_logic(self) -> Dict[str, List[str]]:
     """Azure implementation: returns a list of virtual folders."""
     client = azure_provider.get_blob_service()
+    path_prefix = self.current_path
+    # Example usage
+    path_prefix = f"{path_prefix}"
+    # 1. Normalize the prefix path
+    normalized_prefix = path_prefix.strip('/').replace('\\', '/')
+    if normalized_prefix and not normalized_prefix.endswith('/'):
+        normalized_prefix += '/'
+
+    prefix = normalized_prefix
+
     if not client:
         return {"folders": []}
 
-    container_client = client.get_container_client(BUCKET_NAME)
+    container_client = client.get_container_client(self.bucket_name)
 
     try:
         # ב-Azure walk_blobs מחזיר Blobs וגם BlobPrefix (שזה התיקיות)

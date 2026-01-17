@@ -2,7 +2,6 @@ import boto3, os
 import time
 import traceback
 from flask import Flask, request, jsonify
-from config_reader import BUCKET_NAME
 import io
 import fitz  # PyMuPDF - כבר נמצא ב-requirements שלך
 from docx import Document  # כבר נמצא ב-requirements שלך
@@ -28,13 +27,13 @@ s3 = boto3.client('s3')
 # --- AWS Configuration ---
 
 
-def get_documents_for_path(directory_path):
+def get_documents_for_path(self,directory_path):
     documents = []
     try:
         paginator = s3.get_paginator('list_objects_v2')
         base_prefix = directory_path.strip('/') + '/' if directory_path else ""
 
-        for page in paginator.paginate(Bucket=BUCKET_NAME, Prefix=base_prefix):
+        for page in paginator.paginate(Bucket=self.provider_info["BUCKET_NAME"], Prefix=base_prefix):
             if 'Contents' not in page: continue
 
             for obj in page['Contents']:
@@ -47,7 +46,7 @@ def get_documents_for_path(directory_path):
                 index_key = f".index/{base_path}.json".replace("//", "/")
 
                 try:
-                    idx_resp = s3.get_object(Bucket=BUCKET_NAME, Key=index_key)
+                    idx_resp = s3.get_object(Bucket=self.provider_info["BUCKET_NAME"], Key=index_key)
                     index_data = json.loads(idx_resp['Body'].read().decode('utf-8'))
 
                     # תיקון 1: וידוא שליפה אחידה של המפתח "pages"
@@ -57,11 +56,11 @@ def get_documents_for_path(directory_path):
                     print(f"🔍 Index missing for {filename}. Starting Advanced Textract Analysis...")
                     try:
                         # תיקון 2: הפונקציה החדשה מחזירה True רק כשהיא מסיימת את כל 37 העמודים
-                        success = run_textract_and_save_index(BUCKET_NAME, key)
+                        success = run_textract_and_save_index(self.provider_info["BUCKET_NAME"], key)
 
                         if success:
                             # קריאה מחדש של האינדקס (עכשיו הוא מכיל עברית וגם את כל העמודים)
-                            idx_resp = s3.get_object(Bucket=BUCKET_NAME, Key=index_key)
+                            idx_resp = s3.get_object(Bucket=self.provider_info["BUCKET_NAME"], Key=index_key)
                             index_data = json.loads(idx_resp['Body'].read().decode('utf-8'))
                             pages = index_data.get("pages", [])
                         else:

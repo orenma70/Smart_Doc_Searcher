@@ -30,14 +30,12 @@ from outlook_searcher import OutlookAPISearcher
 from gmail_searcher import GmailAPISearcher
 from icloud_searcher import ICloudAPISearcher
 from speech2text import StopDialog
-from utils import QRadioButton_STYLE_QSS_green_1515bg, QRadioButton_STYLE_QSS_green_1520bg, CHECKBOX_STYLE_QSS_green, CHECKBOX_STYLE_QSS_red
+from utils import get_remote_version, QRadioButton_STYLE_QSS_green_1515bg, QRadioButton_STYLE_QSS_green_1520bg, CHECKBOX_STYLE_QSS_green, CHECKBOX_STYLE_QSS_red
 from search_utilities import initialize_all_clients
 from ui_setup import non_sync_cloud_str, sync_cloud_str
 import pytesseract
-from amazon_bucket import search_with_s3_select
 from utils import CHECKBOX_STYLE_QSS_black, CHECKBOX_STYLE_QSS_gray, Container_STYLE_QSSgray, Container_STYLE_QSS
-
-
+from config_reader import CLOUD_PROVIDERS
 
 pytesseract.pytesseract.tesseract_cmd = r'C:\\Program Files\Tesseract-OCR\tesseract.exe'
 
@@ -67,8 +65,7 @@ LATIN_LETTER_PATTERN = re.compile(r'[a-zA-Z]')
 sequence_pattern = re.compile(r'\d+')
 LATIN_LETTER_PATTERNnNum = re.compile(r'[a-zA-Z]+|\d+')
 
-from config_reader import (BUCKET_NAME, API_search_url, API_simple_search_url, API_get_version_url, API_cache_status_url,
-    CLIENT_PREFIX_TO_STRIP)
+
 
 
 # Function to implement in your class:
@@ -93,7 +90,7 @@ def display_keyword_matches(self, match_results):
     return display_text
 
 def format_simple_search_results(results_data):
-    if results_data.get("status") != "ok":
+    if results_data.get("status")not in { "ok", "Success"}:
         return f"🛑 שגיאה: {results_data}"
 
     matches = results_data.get("matches", [])
@@ -133,15 +130,15 @@ def format_simple_search_results(results_data):
     return "\n".join(output_lines)
 
 
-def check_cache_status_get():
-    print(f"\n--- 2. Checking Cache Status (GET {API_cache_status_url}) ---")
+def check_cache_status_get(self):
+    print(f"\n--- 2. Checking Cache Status (GET {self.provider_info["API_cache_status_url"]}) ---")
 
     # Use requests.get() for status checks
 
 
     try:
         while True:
-            response = requests.get(API_cache_status_url)
+            response = requests.get(self.provider_info["API_cache_status_url"])
             response.raise_for_status()
             status_data = response.json()
             print(f"Status Check Successful (Status {response.status_code}):")
@@ -193,13 +190,13 @@ def on_search_button_clicked(self, query, directory_path ,force_chat = False):
             else:
                 query += " - (פרט היכן מצאת את המידע) "
 
-            if self.cloud_storage_provider == "Google":
-                url = API_search_url
+            if self.provider_info["cloud_provider"] in {"Microsoft", "Google"}:
+                url = self.provider_info["API_search_url"]
                 payload = {
                     "query": query,
                     "directory_path": directory_path
                 }
-            elif self.cloud_storage_provider == "Amazon":
+            elif self.provider_info["cloud_provider"] == "Amazon":
                 AWS_REGION = "ap-southeast-2"
                 KB_ID = "SEL4HSGWF3"
                 # 1. Connect to AWS
@@ -233,56 +230,11 @@ def on_search_button_clicked(self, query, directory_path ,force_chat = False):
 
                 return response['output']['text']
 
-            elif self.cloud_storage_provider == "Microsoft":
 
-
-                from azure.core.credentials import AzureKeyCredential
-                from azure.search.documents import SearchClient
-                from azure.search.documents.models import VectorizableTextQuery
-
-                # 1. Connection settings using your new saved keys
-                # Note: Use your Search Service URL (ends in search.windows.net)
-                endpoint = "https://smartsearch3-openai.openai.azure.com" #os.environ.get("AZURE_SEARCH_ENDPOINT")
-                index_name = os.getenv("AZURE_SEARCH_INDEX", "ocr-index")
-                query_key = os.environ.get("MS-AZURE_SEARCH_KEY")
-
-                # 2. Connect to Azure Search
-                search_client = SearchClient(
-                    endpoint=endpoint,
-                    index_name=index_name,
-                    credential=AzureKeyCredential(query_key)
-                )
-
-                # 3. Hybrid Search Logic (Text + Embedding)
-                # This uses the embedding model to "understand" the meaning of your query
-                vector_query = VectorizableTextQuery(
-                    text=query,
-                    k_nearest_neighbors=3,
-                    fields="contentVector",  # The field name in your index for embeddings
-                    exhaustive=True
-                )
-
-                results = search_client.search(
-                    search_text=query,
-                    #vector_queries=[vector_query],
-                    select=["content", "metadata_storage_name"],
-                    top=5
-                )
-
-                # 4. Processing results for the Agent
-                search_results = []
-                for result in results:
-                    search_results.append({
-                        "text": result["content"],
-                        "source": result["metadata_storage_name"],
-                        "score": result["@search.score"]
-                    })
-
-                response = {"results": search_results}
 
 
         else:
-
+            url = self.provider_info["API_simple_search_url"]
             if self.all_word_search_radio.isChecked():
                 str2_mode = "all"
             else:
@@ -318,7 +270,7 @@ def on_search_button_clicked(self, query, directory_path ,force_chat = False):
         else:
 
             response = requests.post(
-                url = API_simple_search_url,
+                url = url,
                 json=payload,
                 headers={'Content-Type': 'application/json'}
             )
@@ -349,7 +301,7 @@ def on_search_button_clicked(self, query, directory_path ,force_chat = False):
             )
 
             # אם יש מקורות, ניתן להוסיף אותם כאן (כרגע הקוד לא מוציא אותם)
-        elif status == "ok":
+        elif status in{ "ok", "Success"} :
 
             # --- Keyword Search Mode ---
             formatted_output = format_simple_search_results(results_data)
@@ -1025,16 +977,7 @@ def docx_search(self, path, words, mode='any', search_mode='partial'):
 
     return results
 
-def get_remote_version(api_url):
-    try:
-        # פנייה ל-Endpoint החדש שיצרנו
-        response = requests.get(f"{api_url}", timeout=20)
-        if response.status_code == 200:
-            data = response.json()
-            return data.get("version", "Unknown")
-    except Exception as e:
-        return f"Error: {e}"
-    return "Offline"
+
 
 
 class SearchApp(QtWidgets.QWidget):
@@ -1042,10 +985,10 @@ class SearchApp(QtWidgets.QWidget):
         if not self.cloud_gemini_radio.isChecked():
             self.setWindowTitle(f"הדס לוי -  עורך דין - תוכנת חיפוש " + f" Hard Disk")
         else:
-            if self.cloud_storage_provider in ["Google", "Amazon", "Microsoft"]:
-                self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_run_rev} -  {self.cloud_storage_provider} ")
+            if self.provider_info["cloud_provider"] in CLOUD_PROVIDERS:
+                self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_run_rev} -  {self.provider_info["cloud_provider"]} ")
             else:
-                self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.cloud_storage_provider}")
+                self.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {self.provider_info["cloud_provider"]}")
 
     def __init__(self):
         super().__init__()
@@ -1056,8 +999,8 @@ class SearchApp(QtWidgets.QWidget):
 
 
 
-        if self.cloud_storage_provider in {"Amazon","Google","Microsoft"}:
-            self.cloud_run_rev = get_remote_version(API_get_version_url)
+        if self.provider_info["cloud_provider"] in CLOUD_PROVIDERS:
+            self.cloud_run_rev = get_remote_version(self.provider_info["API_get_version_url"])
 
 
         if self.update_app_title:
@@ -1067,7 +1010,7 @@ class SearchApp(QtWidgets.QWidget):
 
         self.resize(1800, 1200)
 
-        result = check_sync(CLIENT_PREFIX_TO_STRIP+"/גירושין/", BUCKET_NAME, prefix='גירושין' )
+        result = check_sync(self,self.provider_info["CLIENT_PREFIX_TO_STRIP"]+"/גירושין/", self.provider_info["BUCKET_NAME"], prefix='גירושין' )
 
         sync0 = result["sync!"]
         self.sync0 = sync0
@@ -1188,7 +1131,7 @@ class SearchApp(QtWidgets.QWidget):
     def save_all2file(self):
         """Clears the search input and, most importantly, the results display area."""
         doc = Document()
-        path = os.path.join(CLIENT_PREFIX_TO_STRIP, "results" + self.last_queryNmode + ".docx")
+        path = os.path.join(self.provider_info["CLIENT_PREFIX_TO_STRIP"], "results" + self.last_queryNmode + ".docx")
         text = self.results_area.toPlainText()
         # Add the text as a paragraph
         doc.add_paragraph(text)
@@ -1199,8 +1142,8 @@ class SearchApp(QtWidgets.QWidget):
 
     def execute_search(self):
         query = self.search_input.toPlainText().strip()
-        if self.cloud_storage_provider == "Google":
-            if not initialize_all_clients():
+        if self.provider_info["cloud_provider"] == "Google":
+            if not initialize_all_clients(self):
                 print("LOG: Request failed - Service initialization failed. Check server logs for IAM/API Key errors.")
 
         if not query:
@@ -1236,7 +1179,7 @@ class SearchApp(QtWidgets.QWidget):
                         QtWidgets.QApplication.processEvents()
 
                     normalized_path = folder.replace("\\", "/")
-                    prefix_to_strip = CLIENT_PREFIX_TO_STRIP.replace("\\", "/")
+                    prefix_to_strip = self.provider_info["CLIENT_PREFIX_TO_STRIP"].replace("\\", "/")
                     # 3. Strip trailing slashes from both for consistent comparison (e.g., C:/a/מצרפי/)
                     normalized_path = normalized_path.strip('/')
                     prefix_to_strip = prefix_to_strip.strip('/')
@@ -1263,7 +1206,7 @@ class SearchApp(QtWidgets.QWidget):
                     if self.non_cloud_gemini_radio.isChecked():
                         self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
                         self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_gray)
-                        self.display_root.setText(CLIENT_PREFIX_TO_STRIP)
+                        self.display_root.setText(self.provider_info["CLIENT_PREFIX_TO_STRIP"])
 
 
                     continue
@@ -1271,7 +1214,7 @@ class SearchApp(QtWidgets.QWidget):
                 else:
                     self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
                     self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_gray)
-                    self.display_root.setText(CLIENT_PREFIX_TO_STRIP)
+                    self.display_root.setText(self.provider_info["CLIENT_PREFIX_TO_STRIP"])
 
 
 
@@ -1369,7 +1312,7 @@ class SearchApp(QtWidgets.QWidget):
 
                             else:
                                 #pdf_text, image_list = extract_text_and_images_from_pdf(str(path))
-                                json_data = get_json_index_if_exists(path)
+                                json_data = get_json_index_if_exists(self,path)
 
                                 if json_data:
                                     # שולחים לחיפוש עם הנתונים מהאינדקס
@@ -1659,7 +1602,7 @@ class SearchApp(QtWidgets.QWidget):
             dir_path_str = ""
             # dir_path = RLO + dir_path # Assuming RLO is defined elsewhere
             if dir_path_list:
-                prefix_to_strip = CLIENT_PREFIX_TO_STRIP.replace("\\", "/")
+                prefix_to_strip = self.provider_info["CLIENT_PREFIX_TO_STRIP"].replace("\\", "/")
                 prefix_to_strip = prefix_to_strip.strip('/')
                 for dir_path in dir_path_list:
                 # 4. Perform the strip only if the path starts with the prefix
@@ -1717,7 +1660,7 @@ class SearchApp(QtWidgets.QWidget):
     def handle_radio_check(self):
 
         if not self.cloud_gemini_radio.isChecked():
-            self.display_root.setText(CLIENT_PREFIX_TO_STRIP)
+            self.display_root.setText(self.provider_info["CLIENT_PREFIX_TO_STRIP"])
             self.display_root.setStyleSheet("color: black;")
             self.setWindowTitle(f"הדס לוי -  עורך דין - תוכנת חיפוש " + f" Hard Disk")
             self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
@@ -1731,7 +1674,7 @@ class SearchApp(QtWidgets.QWidget):
             #self.display_root.setText(white_cloud + black_bucket)
 
             self.display_root.setText("☁️ Bucket")
-            result = check_sync(CLIENT_PREFIX_TO_STRIP+"/גירושין/", BUCKET_NAME, prefix='גירושין')
+            result = check_sync(self.provider_info["CLIENT_PREFIX_TO_STRIP"]+"/גירושין/", self.provider_info["BUCKET_NAME"], prefix='גירושין')
             sync0 = result["sync!"]
             self.sync0 = sync0
             self.update_gcs_radio()

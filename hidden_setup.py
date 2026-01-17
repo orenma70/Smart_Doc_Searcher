@@ -1,5 +1,7 @@
-import json
+import json, ui_setup
 from PyQt5 import QtWidgets, QtCore
+from config_reader import CLOUD_PROVIDERS, set_provider_config
+from utils import get_remote_version
 
 CONFIG_FILE = "config_settings.json"
 
@@ -30,9 +32,17 @@ class SetupDialog(QtWidgets.QDialog):
 
         # Cloud Auto Toggle
         self.cloud_provider = QtWidgets.QComboBox()
-        self.cloud_provider.addItems(["Google", "Amazon"])
-        current_provider = getattr(self.parent_app, 'cloud_storage_provider', 'Google')
-        self.cloud_provider.setCurrentText("Google" if current_provider == "Google" else "Amazon")
+        # 1. הוספת הפריטים
+        self.cloud_provider.addItems(CLOUD_PROVIDERS)
+
+        # 2. שליפת הספק הנוכחי (ברירת מחדל 'Google' אם לא נמצא)
+        current_provider = getattr(self.parent_app, 'cloud_provider', 'Google')
+
+        # 3. התיקון: הגדרת הטקסט לפי מה שנשמר בפועל, בתנאי שהוא קיים ברשימה
+        if current_provider in CLOUD_PROVIDERS:
+            self.cloud_provider.setCurrentText(current_provider)
+        else:
+            self.cloud_provider.setCurrentText("Google")  # ברירת מחדל למקרה של ערך לא תקין
 
         self.cloud_check = QtWidgets.QCheckBox("Auto-Sync Cloud")
         self.cloud_check.setChecked(getattr(self.parent_app, 'hd_cloud_auto_toggle', True))
@@ -58,6 +68,7 @@ class SetupDialog(QtWidgets.QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+
     def get_results(self):
         """Returns a dictionary of the UI state."""
         a = self.ltr_check.isChecked()
@@ -65,7 +76,7 @@ class SetupDialog(QtWidgets.QDialog):
         return {
             "Language": "Hebrew" if self.lang_cb.currentText() == "Hebrew" else "English",
             "isLTR": self.ltr_check.isChecked(),
-            "cloud_storage_provider": self.cloud_provider.currentText(),
+            "cloud_provider": self.cloud_provider.currentText(),
             "hd_cloud_auto_toggle": self.cloud_check.isChecked(),
             "Voice_recognition_mode": self.voice_cb.currentText()
         }
@@ -89,12 +100,13 @@ def handle_setup_dialog(parent_app):
             parent_app.isLTR = results["isLTR"]
             parent_app.hd_cloud_auto_toggle = results["hd_cloud_auto_toggle"]
             parent_app.Voice_recognition_mode = results["Voice_recognition_mode"]
-            if parent_app.cloud_storage_provider != results["cloud_storage_provider"]:
-                parent_app.cloud_storage_provider = results["cloud_storage_provider"]
-                if parent_app.cloud_storage_provider in ["Google", "Amazon", "Microsoft"]:
-                    parent_app.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {parent_app.cloud_run_rev} -  {parent_app.cloud_storage_provider} ")
+            parent_app.cloud_run_rev = get_remote_version(parent_app.provider_info["API_get_version_url"])
+            if parent_app.provider_info["cloud_provider"] != results["cloud_provider"]:
+                parent_app.provider_info=set_provider_config(results["cloud_provider"])
+                if parent_app.provider_info["cloud_provider"] in CLOUD_PROVIDERS:
+                    parent_app.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {parent_app.cloud_run_rev} -  {parent_app.provider_info["cloud_provider"]} ")
                 else:
-                    parent_app.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {parent_app.cloud_storage_provider}")
+                    parent_app.setWindowTitle(f"  הדס לוי -  עורך דין - תוכנת חיפוש  {pparent_app.provider_info["cloud_provider"]}")
             # 4. Immediate UI Update (Direction)
             direction = QtCore.Qt.LeftToRight if not parent_app.isLTR else QtCore.Qt.RightToLeft
             parent_app.setLayoutDirection(direction)

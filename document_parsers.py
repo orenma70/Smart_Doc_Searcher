@@ -11,7 +11,7 @@ from docx import Document
 import pypdf
 from PIL import Image # Used to handle the image object
 import json
-from config_reader import CLIENT_PREFIX_TO_STRIP
+
 
 def find_paragraph_position_in_pages(paragraph_text: str, pages):
     """
@@ -468,8 +468,8 @@ def get_json_index_path(pdf_path, base_folder=""):
 
 
 # --- שימוש בתוך הפונקציה שלך ---
-def get_json_index_if_exists(pdf_path):
-    json_path = get_json_index_path(pdf_path,CLIENT_PREFIX_TO_STRIP)
+def get_json_index_if_exists(self,pdf_path):
+    json_path = get_json_index_path(pdf_path,self.provider_info.CLIENT_PREFIX_TO_STRIP)
 
     if os.path.exists(json_path):
         print(f"📖 Loading local index from: {json_path}")

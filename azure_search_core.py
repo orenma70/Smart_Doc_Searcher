@@ -4,7 +4,8 @@ from azure.storage.blob import BlobServiceClient
 from azure_search_utilities import azure_provider, search_in_json_content, highlight_matches_html, match_line
 import base64
 import urllib.parse  # חובה להוסיף בראש הקובץ
-
+from openai import AzureOpenAI
+import requests
 
 
 
@@ -52,6 +53,59 @@ def decode_azure_path(encoded_path):
     except Exception as e:
         print(f"⚠️ Decode failed: {e}")
         return urllib.parse.unquote(encoded_path)
+
+
+def perform_azure_ai_search(query):
+    try:
+        # 1. חיפוש באינדקס (משתמש במפתח החיפוש הייעודי)
+        search_key = os.getenv("azure-key-search")
+        search_url = "https://smart-search-service3.search.windows.net/indexes/azureblob-index2/docs/search?api-version=2023-11-01"
+
+        print(f"LOG: 1. Searching Index...")
+        r = requests.post(search_url,
+                          json={"search": query, "top": 3},
+                          headers={"api-key": search_key, "Content-Type": "application/json"})
+        r.raise_for_status()
+        context = "\n".join([f"Content: {d['content']}" for d in r.json().get('value', [])])
+
+        # 2. פנייה ל-OpenAI (כאן התיקון הקריטי!)
+        # אנחנו מוותרים על ה-Connection String ומשתמשים במפתח ה-AI שקיים לך
+        openai_key = os.getenv("AZURE_OPENAI_KEY")
+
+
+        print(f"LOG: 2. Initializing AI with AZURE_OPENAI_KEY (starts with {openai_key[:4] if openai_key else 'None'})")
+
+        ai_client = AzureOpenAI(
+            api_key=openai_key,
+            azure_endpoint="https://smartsearch3-openai.openai.azure.com",
+            api_version="2024-02-01"
+        )
+
+        print(f"LOG: 3. Sending to GPT...")
+        response = ai_client.chat.completions.create(
+            model="gpt-4.1",
+            messages=[{"role": "user", "content": f"Context: {context}\nQuestion: {query}"}]
+        )
+
+        return response.choices[0].message.content
+
+    except Exception as e:
+        print(f"❌ AI Error: {str(e)}")
+        return f"AI Error: {str(e)}"
+
+@app.route('/search', methods=['POST'])
+def search_endpoint():
+
+    data = request.get_json(silent=True)
+    query = data.get('query', '').strip()
+
+    try:
+        print(f"--- 🚀 New AI start ---")
+        answer = perform_azure_ai_search(query)
+        print(f"--- 🚀 New AI end ---")
+        return jsonify({"answer": answer, "status": "Success"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/simple_search', methods=['POST'])

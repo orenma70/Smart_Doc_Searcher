@@ -1,6 +1,6 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
-from config_reader import (LOCAL_MODE, CLIENT_PREFIX_TO_STRIP, Language, Voice_recognition_mode,
-                           hd_cloud_auto_toggle, cloud_storage_provider)
+from config_reader import (LOCAL_MODE, PROVIDER_CONFIG, Language, Voice_recognition_mode,
+                           hd_cloud_auto_toggle)
 from utils import (CHECKBOX_STYLE_QSS_black, CHECKBOX_STYLE_QSS_gray, CHECKBOX_STYLE_QSS_blue, CHECKBOX_STYLE_QSS_red, CHECKBOX_STYLE_QSS_green,
                    Container_STYLE_QSS, Radio_STYLE_QSS_green, Radio_STYLE_QSS_red, QRadioButton_STYLE_QSS_green_1515bg,QRadioButton_STYLE_QSS_green_1616bg,
                    QRadioButton_STYLE_QSS_green_1520bg, CHECKBOX_STYLE_QSS_black22, saveclear_STYLE_QSS, CHECKBOX_STYLE_QSS_gray22, CHECKBOX_STYLE_QSS_gray22noframe)
@@ -79,12 +79,12 @@ else:
     save_btn_str = "שמירה 💾"
 
 def setup_ui(self):
-
+    self.provider_info = PROVIDER_CONFIG
     self.Language = Language
     self.isLTR = isLTR
     self.hd_cloud_auto_toggle = hd_cloud_auto_toggle == "True"
     self.Voice_recognition_mode = Voice_recognition_mode
-    self.cloud_storage_provider =cloud_storage_provider
+
 
     self.update_app_title = update_app_title
     font0 = QtGui.QFont()
@@ -137,7 +137,7 @@ def setup_ui(self):
 
 
     if LOCAL_MODE == "True":
-        self.display_root = QtWidgets.QLabel(CLIENT_PREFIX_TO_STRIP)
+        self.display_root = QtWidgets.QLabel(self.provider_info.CLIENT_PREFIX_TO_STRIP)
     else:
         self.display_root = QtWidgets.QLabel("☁️ Bucket")
         self.display_root.setStyleSheet("color: red;")

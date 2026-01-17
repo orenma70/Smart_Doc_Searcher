@@ -10,7 +10,6 @@ import hashlib
 import binascii, base64
 from ui_setup import isLTR
 from PyQt5.QtWidgets import QMessageBox
-from config_reader import cloud_storage_provider,BUCKET_NAME
 import boto3  # Make sure to pip install boto3
 import pdfplumber
 import io, re
@@ -19,20 +18,9 @@ import pytesseract
 from PIL import Image
 from docx import Document
 import json
-from config_reader import CLIENT_PREFIX_TO_STRIP
 from azure.storage.blob import BlobServiceClient
 
-class CloudProvider:
-    AWS = "Amazon"
-    GOOGLE = "Google"
-    AZURE = "Microsoft"
 
-# הגדרת ה-Mode לפי בחירת המשתמש
-current_provider = cloud_storage_provider # מגיע מהקונפיגורציה שלך
-
-use_mode_aws = (current_provider == CloudProvider.AWS)
-use_mode_clr = (current_provider == CloudProvider.GOOGLE)
-use_mode_azr = (current_provider == CloudProvider.AZURE)
 
 # Set your flag here based on your environment
 
@@ -106,7 +94,7 @@ def get_azure_files_recursive(container_name, prefix):
 
     return cloud_files
 
-def delete_from_cloud_with_index(filename, prefix=""):
+def delete_from_cloud_with_index(self,filename, prefix=""):
     """
     מוחק מהענן (AWS או GCS) את הקובץ המקורי ואת האינדקס שלו
     """
@@ -117,13 +105,13 @@ def delete_from_cloud_with_index(filename, prefix=""):
 
 
     try:
-        if use_mode_aws:
+        if self.cloud_provider == "Amazon":
             # --- מחיקה מ-AWS S3 ---
             client = get_s3_client()
 
             # מחיקה של שני האובייקטים בבת אחת (יעיל יותר)
             client.delete_objects(
-                Bucket=BUCKET_NAME,
+                Bucket=self.bucket_name,
                 Delete={
                     'Objects': [
                         {'Key': target_key},
@@ -134,12 +122,12 @@ def delete_from_cloud_with_index(filename, prefix=""):
             )
             print(f"🗑️ AWS: Deleted {target_key} and its index.")
 
-        elif use_mode_clr:
+        elif self.cloud_provider == "Google":
             # --- מחיקה מ-Google Cloud Storage ---
             global gcs_client
             if gcs_client is None:
                 gcs_client = get_storage_client()
-            bucket = gcs_client.bucket(BUCKET_NAME)
+            bucket = gcs_client.bucket(self.bucket_name)
 
             # ב-GCS מוחקים כל אובייקט בנפרד
             blob = bucket.blob(target_key)
@@ -151,12 +139,12 @@ def delete_from_cloud_with_index(filename, prefix=""):
                 index_blob.delete()
 
             print(f"🗑️ GCS: Deleted {target_key} and its index.")
-        elif use_mode_azr:
+        elif self.cloud_provider == "Microsoft":
             # --- מחיקה מ-Microsoft Azure Blob Storage ---
 
             connection_string = os.getenv("azuresmartsearch3key1conn")
             blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-            container_client = blob_service_client.get_container_client(BUCKET_NAME)
+            container_client = blob_service_client.get_container_client(self.bucket_name)
             # מחיקה של הקובץ המקורי
             blob_file = container_client.get_blob_client(target_key)
             if blob_file.exists():
@@ -263,8 +251,12 @@ def extract_text_for_indexing(file_bytes, file_ext):
     return pages_data, used_ocr
 
 
-def upload_to_cloud(local_folder, filename, base_folder):
+def upload_to_cloud(self,local_folder, filename, base_folder):
     # נרמול נתיבים
+    cloud_provider = self.provider_info["cloud_provider"]
+    use_mode_aws = cloud_provider == "Amazon"
+    use_mode_azr = cloud_provider == "Microsoft"
+    use_mode_clr = cloud_provider == "Google"
 
     local_folder = os.path.normpath(local_folder)
     base_folder = os.path.normpath(base_folder)
@@ -325,13 +317,13 @@ def upload_to_cloud(local_folder, filename, base_folder):
         if use_mode_aws:
             client = get_s3_client()
             # העלאת PDF
-            client.upload_file(pdf_path, BUCKET_NAME, relative_file_path, ExtraArgs={
+            client.upload_file(pdf_path, self.provider_info["BUCKET_NAME"], relative_file_path, ExtraArgs={
                 'Metadata': {'md5-hash': pdf_hex_md5}
             })
             # העלאת JSON
             client.put_object(
                 Body=json_payload,
-                Bucket=BUCKET_NAME,
+                Bucket=self.provider_info["BUCKET_NAME"],
                 Key=cloud_index_key,
                 ContentType='application/json',
                 Metadata={'md5-hash': json_hex_md5}
@@ -339,7 +331,7 @@ def upload_to_cloud(local_folder, filename, base_folder):
             print(f"✅ Uploaded: {filename} (JSON MD5: {json_hex_md5})")
         elif use_mode_clr:
             client = get_storage_client()
-            bucket = client.bucket(BUCKET_NAME)
+            bucket = client.bucket(self.provider_info["BUCKET_NAME"])
 
             blob_file = bucket.blob(relative_file_path)
             blob_file.md5_hash = b64_md5
@@ -363,7 +355,7 @@ def upload_to_cloud(local_folder, filename, base_folder):
         elif use_mode_azr:
             connection_string = os.getenv("azuresmartsearch3key1conn")
             blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-            container_client = blob_service_client.get_container_client(BUCKET_NAME)
+            container_client = blob_service_client.get_container_client(self.provider_info["BUCKET_NAME"])
 
             # 1. העלאת קובץ ה-PDF
             blob_file = container_client.get_blob_client(relative_file_path)
@@ -423,26 +415,39 @@ def get_s3_client():
 
 def browse_cloud_path(self) -> Dict[str, List[str]]:
     """Entry point for the GUI to fetch folder lists."""
-    normalized_prefix = self.current_path.strip('/').replace('\\', '/')
-    if normalized_prefix and not normalized_prefix.endswith('/'):
-        normalized_prefix += '/'
+
+
+    use_mode_aws = self.provider == "Amazon"
+    use_mode_azr = self.provider == "Microsoft"
+    use_mode_clr = self.provider == "Google"
 
     if use_mode_aws:
-        return browse_s3_path_logic(normalized_prefix)
+        return browse_s3_path_logic(self)
     elif use_mode_clr:
         return browse_gcs_path(self)
     elif use_mode_azr:
-        return browse_azure_path_logic(normalized_prefix)
+        return browse_azure_path_logic(self)
     else:
         return False
 
-def browse_s3_path_logic(prefix: str) -> Dict[str, List[str]]:
+def browse_s3_path_logic(self) -> Dict[str, List[str]]:
     """AWS S3 implementation: returns a list of folder names just like GCS."""
+
+    path_prefix = self.current_path
+    # Example usage
+    path_prefix = f"{path_prefix}"
+    # 1. Normalize the prefix path
+    normalized_prefix = path_prefix.strip('/').replace('\\', '/')
+    if normalized_prefix and not normalized_prefix.endswith('/'):
+        normalized_prefix += '/'
+
+    prefix = normalized_prefix
+
     client = get_s3_client()
     try:
         # Delimiter='/' tells S3 to group files into virtual folders
         response = client.list_objects_v2(
-            Bucket=BUCKET_NAME,
+            Bucket=self.bucket_name,
             Prefix=prefix,
             Delimiter='/'
         )
@@ -462,14 +467,14 @@ def browse_s3_path_logic(prefix: str) -> Dict[str, List[str]]:
         return {"folders": []}
 
 
-def browse_gcs_path_logic(prefix: str) -> Dict[str, List[str]]:
+def browse_gcs_path_logic(self,prefix: str) -> Dict[str, List[str]]:
     """Your original GCS logic wrapped for the switchboard."""
     global gcs_client
     if gcs_client is None:
         gcs_client = get_storage_client()
 
     try:
-        bucket = gcs_client.bucket(BUCKET_NAME)
+        bucket = gcs_client.bucket(self.bucket_name)
         blobs_iterator = bucket.list_blobs(prefix=prefix, delimiter='/')
         # GCS returns folders in the 'prefixes' attribute when delimiter is used
         folders = [p.rstrip('/').split('/')[-1] for p in blobs_iterator.prefixes]
@@ -493,12 +498,12 @@ def get_local_hashes(file_path):
     b64_digest = base64.b64encode(binascii.unhexlify(hex_digest)).decode("utf-8")
     return hex_digest, b64_digest
 
-def browse_s3_logic(prefix: str) -> Dict[str, List[str]]:
+def browse_s3_logic(self,prefix: str) -> Dict[str, List[str]]:
     """AWS S3 implementation of folder browsing."""
     try:
         # Note: Boto3 uses 'CommonPrefixes' for virtual folders
         response = s3_client.list_objects_v2(
-            Bucket=BUCKET_NAME,
+            Bucket=self.bucket_name,
             Prefix=prefix,
             Delimiter='/'
         )
@@ -527,13 +532,13 @@ def get_file_hash(path):
     return hex_md5, base64_md5
 
 
-def browse_s3_path(prefix: str) -> Dict[str, List[str]]:
+def browse_s3_path(self,prefix: str) -> Dict[str, List[str]]:
     """AWS S3 implementation of folder browsing."""
     try:
         s3_client = boto3.client('s3')  # Uses your aws configure credentials
         # Delimiter='/' is what tells S3 to 'act' like a folder system
         response = s3_client.list_objects_v2(
-            Bucket=BUCKET_NAME,
+            Bucket=self.bucket_name,
             Prefix=prefix,
             Delimiter='/'
         )
@@ -579,11 +584,16 @@ def md5_of_file(path):
     return base64.b64encode(binascii.unhexlify(hash_md5.hexdigest())).decode("utf-8")
 
 
-def check_sync(local_path, bucket_name, prefix=""):
+def check_sync(self,local_path, bucket_name, prefix=""):
     """
     גרסה מעודכנת המבוססת על הקוד המקורי - שואלת פעם אחת על הכל.
     """
     # 1. איסוף קבצים מקומיים וה-Hashes שלהם (ללא שינוי)
+    cloud_provider = self.provider_info["cloud_provider"]
+    use_mode_aws = cloud_provider  == "Amazon"
+    use_mode_azr = cloud_provider == "Microsoft"
+    use_mode_clr = cloud_provider == "Google"
+
     local_files = {}
     for root, _, files in os.walk(local_path):
         for f in files:
@@ -593,7 +603,7 @@ def check_sync(local_path, bucket_name, prefix=""):
             hex_md5, b64_md5 = get_local_hashes(full_path)
             local_files[rel_path] = hex_md5 if use_mode_aws else b64_md5
 
-    index_root = os.path.join(CLIENT_PREFIX_TO_STRIP, ".index")
+    index_root = os.path.join(self.provider_info["CLIENT_PREFIX_TO_STRIP"], ".index")
     if os.path.exists(index_root):
         for root, _, files in os.walk(index_root):
             for f in files:
@@ -654,7 +664,7 @@ def check_sync(local_path, bucket_name, prefix=""):
         msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
         if msg.exec_() == QMessageBox.Ok:
             for filename in files_to_upload:
-                upload_to_cloud(local_path, filename, base_folder=CLIENT_PREFIX_TO_STRIP)
+                upload_to_cloud(self,local_path, filename, base_folder=self.provider_info["CLIENT_PREFIX_TO_STRIP"])
 
                 if filename in missing_in_cloud:
                     missing_in_cloud.remove(filename)  # הקובץ כבר לא חסר בענן
@@ -667,12 +677,11 @@ def check_sync(local_path, bucket_name, prefix=""):
         msg = QMessageBox()
         msg.setIcon(QMessageBox.Warning)
         msg.setWindowTitle("מחיקה מהענן" if not isLTR else "Cloud Delete")
-        msg.setText(
-            f"נמצאו {len(files_to_delete)} קבצים למחיקה מהענן. לבצע?" if not isLTR else f"Delete {len(files_to_delete)} files from cloud?")
+        msg.setText(f"נמצאו {len(files_to_delete)} קבצים למחיקה מהענן. לבצע?" if not isLTR else f"Delete {len(files_to_delete)} files from cloud?")
         msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
         if msg.exec_() == QMessageBox.Ok:
             for filename in files_to_delete:
-                delete_from_cloud_with_index(filename, prefix=prefix)
+                delete_from_cloud_with_index(self,filename, prefix=prefix)
 
     sync_status = not missing_locally and not missing_in_cloud and not mismatched_files
     return {
@@ -774,11 +783,13 @@ def browse_gcs_path(self) -> Dict[str, List[str]]:
     """
     path_prefix = self.current_path
     # Example usage
-
-
-
-
     path_prefix = f"{path_prefix}"
+    # 1. Normalize the prefix path
+    normalized_prefix = path_prefix.strip('/').replace('\\', '/')
+    if normalized_prefix and not normalized_prefix.endswith('/'):
+        normalized_prefix += '/'
+
+
     timer0 = time.time()
 
     global gcs_client
@@ -790,14 +801,11 @@ def browse_gcs_path(self) -> Dict[str, List[str]]:
     if gcs_client is None:
         return {"folders": []}
 
-    # 1. Normalize the prefix path
-    normalized_prefix = path_prefix.strip('/').replace('\\', '/')
-    if normalized_prefix and not normalized_prefix.endswith('/'):
-        normalized_prefix += '/'
+
 
     try:
 
-        bucket = gcs_client.bucket(BUCKET_NAME)
+        bucket = gcs_client.bucket(self.bucket_name)
         blobs_iterator = bucket.list_blobs(prefix=normalized_prefix)
 
         folders = set()
@@ -845,8 +853,10 @@ class GCSBrowserDialog(QtWidgets.QDialog):
 
     def __init__(self, parent=None, initial_path=""):
         super().__init__(parent)
-        provider = "Amazon S3" if use_mode_aws else "Google Cloud"
-        self.setWindowTitle(f"Browse {provider} Bucket")
+
+        self.provider = parent.provider_info["cloud_provider"]
+        self.bucket_name = parent.provider_info["BUCKET_NAME"]
+        self.setWindowTitle(f"Browse {self.provider} Bucket")
         self.setGeometry(100, 100, 600, 400)
         self.current_path = initial_path.strip('/').replace('\\', '/')
         self.selected_path = None
@@ -897,6 +907,7 @@ class GCSBrowserDialog(QtWidgets.QDialog):
         """Fetches contents from GCS and updates the list widget."""
         self.list_widget.clear()
 
+        provider = self.provider
         # Strip trailing slash for display, but keep it internal for logic
         self.current_path = path.strip('/').replace('\\', '/')
         display_path = self.current_path if self.current_path else " (Root)"
@@ -984,7 +995,7 @@ if __name__ == "__main__":
 
     # Optional: Set a dark theme or style
     app.setStyle("Fusion")
-
+    BUCKET_NAME =""
     print(f" on Bucket: {BUCKET_NAME}") #Starting test with use_mode_aws={use_mode_aws}
 
     dialog = GCSBrowserDialog()
