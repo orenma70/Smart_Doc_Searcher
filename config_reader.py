@@ -32,6 +32,7 @@ def set_provider_config(cloud_provider):
         if cloud_provider == "Google":
             PROVIDER_CONFIG["GCS_OCR_OUTPUT_PATH"] = f"gs://{PROVIDER_CONFIG['BUCKET_NAME']}/vision_ocr_output/"
 
+
         return PROVIDER_CONFIG
 
 def read_setup(key_name, config_file="setup.txt"):

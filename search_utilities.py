@@ -14,10 +14,14 @@ from docx import Document
 from document_parsers import extract_text_and_images_from_pdf
 import pytesseract
 from PIL import Image
-from azure.storage.blob import BlobServiceClient
+import config_reader
 
+cloud_provider="Google"
+PROVIDER_CONFIG=config_reader.set_provider_config(cloud_provider)
 
-
+BUCKET_NAME = PROVIDER_CONFIG["BUCKET_NAME"]
+GCS_OCR_OUTPUT_PATH = PROVIDER_CONFIG["GCS_OCR_OUTPUT_PATH"]
+CLIENT_PREFIX_TO_STRIP = PROVIDER_CONFIG["CLIENT_PREFIX_TO_STRIP"]
 
 # --- Global Client Variables (Set to None for Lazy Loading) ---
 storage_client: Optional[storage.Client] = None
@@ -29,6 +33,7 @@ gcs_bucket: Optional[storage.Client] = None  # <-- NEW: Store the GCS Bucket obj
 
 IS_CLOUD_RUN = bool(os.environ.get('K_SERVICE'))
 MAX_CHARS_PER_DOC = 100000
+LOCAL_ROOT_PATH = CLIENT_PREFIX_TO_STRIP  # CHANGE THIS to your root folder!
 MAX_WAIT_SECONDS = 600
 POLL_INTERVAL_SECONDS = 10
 MAX_CONCURRENT_DOWNLOADS = 10
@@ -73,7 +78,7 @@ def get_hd_files_context(directory_path: str, local_root: str) -> List[Dict[str,
         for file_name in files:
             full_file_path = (root_path / file_name)
 
-            # 3.
+            # 3. CRITICAL: Get the path relative to the LOCAL_ROOT_PATH
             # This ensures the 'full_path' key matches the GCS/Cache format (e.g., 'archive/2025/doc.txt')
             try:
                 # Use .as_posix() to ensure forward slashes, even on Windows
@@ -187,7 +192,7 @@ def get_documents_from_cache(directory_path: str) -> Optional[List[Dict[str, Any
     return None
 
 
-def get_documents_for_path(self,directory_path: str) -> List[Dict[str, Any]]:
+def get_documents_for_path(directory_path: str) -> List[Dict[str, Any]]:
     # 1. נרמול הנתיב (חשוב להתאמה למפתחות בענן)
     cleaned_path = directory_path.strip("/")
 
@@ -203,7 +208,7 @@ def get_documents_for_path(self,directory_path: str) -> List[Dict[str, Any]]:
 
     try:
         client = get_storage_client()
-        bucket = client.bucket(self.provider_info["BUCKET_NAME"])
+        bucket = client.bucket(BUCKET_NAME)
 
         # הגדרת ה-prefix לחיפוש הקבצים המקוריים
         prefix = cleaned_path + "/" if cleaned_path else ""
@@ -245,7 +250,7 @@ def get_documents_for_path(self,directory_path: str) -> List[Dict[str, Any]]:
 
     return fetched_documents
 
-def initialize_all_clients(self):
+def initialize_all_clients():
     """
     Initializes clients only if they haven't been initialized yet.
     This runs inside the request context on the first call.
@@ -258,13 +263,13 @@ def initialize_all_clients(self):
         storage_client = get_storage_client()
 
         # --- CRITICAL INSERTION POINT ---
-        if storage_client is not None and self.provider_info["BUCKET_NAME"] and gcs_bucket is None:
+        if storage_client is not None and BUCKET_NAME and gcs_bucket is None:
             try:
                 # This line sets the global gcs_bucket variable!
-                gcs_bucket = storage_client.bucket(self.provider_info["BUCKET_NAME"])
-                print(f"✅ GCS STEP 2: Successfully connected to Bucket '{self.provider_info["BUCKET_NAME"]}'.")
+                gcs_bucket = storage_client.bucket(BUCKET_NAME)
+                print(f"✅ GCS STEP 2: Successfully connected to Bucket '{BUCKET_NAME}'.")
             except Exception as e:
-                print(f"FATAL: GCS STEP 2: FAILED to get Bucket '{self.provider_info["BUCKET_NAME"]}'. Check IAM Permissions. Error: {e}")
+                print(f"FATAL: GCS STEP 2: FAILED to get Bucket '{BUCKET_NAME}'. Check IAM Permissions. Error: {e}")
                 gcs_bucket = None  # Ensure it is None on failure
         # --- END CRITICAL INSERTION POINT ---
 
@@ -313,50 +318,50 @@ def get_gemini_client():
 
 
 # Add this function to search_utilities.py
-def get_gcs_bucket(self):
+def get_gcs_bucket():
     """Returns the initialized GCS bucket object, ensuring initialization is attempted."""
     global gcs_bucket
     if gcs_bucket is None:
-        initialize_all_clients(self)
+        initialize_all_clients()
     return gcs_bucket
 
 
 # Add this function (or just use get_gcs_bucket logic)
-def get_storage_client_instance(self):
+def get_storage_client_instance():
     """Returns the initialized Storage client object."""
     global storage_client
     if storage_client is None:
-        initialize_all_clients(self)
+        initialize_all_clients()
     return storage_client
 
 
 # Add this function
-def get_vision_client_instance(self):
+def get_vision_client_instance():
     """Returns the initialized Vision client object."""
     global vision_client
     if vision_client is None:
-        initialize_all_clients(self)
+        initialize_all_clients()
     return vision_client
 
 
 # Add this function
-def get_gemini_client_instance(self):
+def get_gemini_client_instance():
     """Returns the initialized Gemini client object."""
     global gemini_client
     if gemini_client is None:
-        initialize_all_clients(self)
+        initialize_all_clients()
     return gemini_client
 
 
 
-def detect_text_gcs_async(self,gcs_uri, gcs_destination_uri):
+def detect_text_gcs_async(gcs_uri, gcs_destination_uri):
     """
     Performs asynchronous OCR on a PDF in GCS using the Vision API.
     gcs_uri: Input GCS path of the PDF (e.g. 'gs://bucket/folder/file.pdf').
     gcs_destination_uri: GCS folder prefix where JSON results will be written
                          (e.g. 'gs://bucket/vision_ocr_output/job123/').
     """
-    vision_client = get_vision_client_instance(self)
+    vision_client = get_vision_client_instance()
 
     if vision_client is None:
         return "ERROR: Vision client not initialized."
@@ -438,7 +443,7 @@ def detect_text_gcs_async(self,gcs_uri, gcs_destination_uri):
 
 
 
-def extract_content(self,blob_bytes, blob_name, full_gcs_path):
+def extract_content(blob_bytes, blob_name, full_gcs_path):
     """
     Extracts text content from document bytes.
 
@@ -448,7 +453,7 @@ def extract_content(self,blob_bytes, blob_name, full_gcs_path):
     """
 
     blob_name_lower = blob_name.lower()
-    prefix = "gs://" + self.provider_info["BUCKET_NAME"] + "/"
+    prefix = "gs://" + BUCKET_NAME + "/"
     gcs_uri = prefix + full_gcs_path
 
     # Check for PDF
@@ -458,7 +463,7 @@ def extract_content(self,blob_bytes, blob_name, full_gcs_path):
 
         # Create a unique temporary path for this job's output
         job_id = f"ocr_job_{os.path.basename(full_gcs_path)}_{int(time.time())}"
-        gcs_destination_uri = self.provider_info["GCS_OCR_OUTPUT_PATH"] + job_id + "/"
+        gcs_destination_uri = GCS_OCR_OUTPUT_PATH + job_id + "/"
 
         # Call the async OCR function defined in step 2
         try:
@@ -521,7 +526,7 @@ def extract_content(self,blob_bytes, blob_name, full_gcs_path):
 
 
 
-def get_gcs_files_context(self,directory_path: str, bucket_name: str, query: str = "") -> List[Dict[str, Any]]:
+def get_gcs_files_context(directory_path: str, bucket_name: str, query: str = "") -> List[Dict[str, Any]]:
     """
     Fetches, downloads, and processes content from GCS concurrently using a ThreadPoolExecutor.
     This prevents the request from hitting a 504 Gateway Timeout on large directories.
@@ -529,7 +534,7 @@ def get_gcs_files_context(self,directory_path: str, bucket_name: str, query: str
     directory_path = (directory_path or "").strip("/")
     prefix = f"{directory_path}/" if directory_path else ""
     file_data: List[Dict[str, Any]] = []
-    storage_client = get_storage_client_instance(self)
+    storage_client = get_storage_client_instance()
     # 1. Get the list of blobs (metadata only - this is fast)
     print(f"prefix: debug to list GCS blobs: {prefix}")
     try:

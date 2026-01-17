@@ -49,7 +49,7 @@ Outlook_address=orenma70@outlook.com   #Jm2005
 iCloud_address=ornma70@iCloud.com
 
 # כתובות ה-API של Cloud Run 
-API_main_google=https://smart-doc-searcher-api-v15-359127107055.us-central1.run.app/
+API_main_google=https://smart-doc-searcher-v16-api-359127107055.us-central1.run.app/
 API_main_amazon=https://bgqyxb9ztm.ap-southeast-2.awsapprunner.com/
 API_main_microsoft=https://smart-doc-searcher-api.lemoncoast-d85338ac.eastus.azurecontainerapps.io/
 

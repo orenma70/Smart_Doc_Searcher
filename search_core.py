@@ -6,7 +6,7 @@ from flask import Flask, request, jsonify
 
 
 
-from search_utilities import (get_documents_for_path, initialize_all_clients, get_gemini_client_instance)
+from search_utilities import (get_documents_for_path, get_gemini_client_instance)
 
 
 # ==============================================================================
@@ -236,6 +236,19 @@ def perform_search(query: str, directory_path: str = ""):
 app = Flask(__name__)
 
 timer0 = time.time()
+
+@app.route('/version', methods=['GET'])
+def get_version():
+    """Returns the current status of the document cache."""
+
+    revision = os.environ.get("K_REVISION", "LOCAL_TEST_ENV")
+    status_data = {
+
+        "version": revision
+
+    }
+    return jsonify(status_data)
+
 @app.route('/cache_status', methods=['GET'])
 def get_cache_status():
     """Returns the current status of the document cache."""

@@ -1143,7 +1143,7 @@ class SearchApp(QtWidgets.QWidget):
     def execute_search(self):
         query = self.search_input.toPlainText().strip()
         if self.provider_info["cloud_provider"] == "Google":
-            if not initialize_all_clients(self):
+            if not initialize_all_clients():
                 print("LOG: Request failed - Service initialization failed. Check server logs for IAM/API Key errors.")
 
         if not query:
