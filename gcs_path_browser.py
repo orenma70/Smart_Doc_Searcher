@@ -84,16 +84,15 @@ def get_azure_files_recursive(container_name, prefix):
                 continue
 
             try:
-                # 4. חילוץ ה-MD5
-                # מחפשים קודם ב-Metadata (בפורמט Hex ששמרנו ב-upload_to_cloud)
-                md5_hash = blob.metadata.get('md5_hash') or blob.metadata.get('md5-hash')
+                raw_md5 = blob.metadata.get('md5_hash') or blob.content_settings.content_md5
 
-                # אם אין ב-Metadata, ננסה לשלוף את ה-Hash המובנה של Azure (Base64)
-                if not md5_hash and blob.content_settings.content_md5:
-                    import base64
-                    md5_hash = base64.b64encode(blob.content_settings.content_md5).decode('utf-8')
+                if isinstance(raw_md5, bytes):
+                    md5_hash = raw_md5.hex()
+                elif isinstance(raw_md5, str) and '==' in raw_md5:
+                    md5_hash = base64.b64decode(raw_md5).hex()
+                else:
+                    md5_hash = str(raw_md5).strip().lower() if raw_md5 else None
 
-                # המפתח הוא הנתיב המלא ב-Container (כולל .index אם קיים בנתיב)
                 cloud_files[full_key] = md5_hash
 
             except Exception as e:
@@ -112,16 +111,16 @@ def delete_from_cloud_with_index(self,filename, prefix=""):
     target_key = f"{prefix}/{filename}".replace("//", "/").strip("/")
     base_name = os.path.splitext(filename)[0]
     index_key = f".index/{prefix}/{base_name}.json".replace("//", "/").strip("/")
-
-
+    cloud_provider =self.provider_info.get("cloud_provider")
+    bucket_name = self.provider_info.get("BUCKET_NAME")
     try:
-        if self.cloud_provider == "Amazon":
+        if cloud_provider == "Amazon":
             # --- מחיקה מ-AWS S3 ---
             client = get_s3_client()
 
             # מחיקה של שני האובייקטים בבת אחת (יעיל יותר)
             client.delete_objects(
-                Bucket=self.bucket_name,
+                Bucket=bucket_name,
                 Delete={
                     'Objects': [
                         {'Key': target_key},
@@ -132,12 +131,12 @@ def delete_from_cloud_with_index(self,filename, prefix=""):
             )
             print(f"🗑️ AWS: Deleted {target_key} and its index.")
 
-        elif self.cloud_provider == "Google":
+        elif cloud_provider == "Google":
             # --- מחיקה מ-Google Cloud Storage ---
             global gcs_client
             if gcs_client is None:
                 gcs_client = get_storage_client()
-            bucket = gcs_client.bucket(self.bucket_name)
+            bucket = gcs_client.bucket(bucket_name)
 
             # ב-GCS מוחקים כל אובייקט בנפרד
             blob = bucket.blob(target_key)
@@ -149,12 +148,12 @@ def delete_from_cloud_with_index(self,filename, prefix=""):
                 index_blob.delete()
 
             print(f"🗑️ GCS: Deleted {target_key} and its index.")
-        elif self.cloud_provider == "Microsoft":
+        elif cloud_provider == "Microsoft":
             # --- מחיקה מ-Microsoft Azure Blob Storage ---
 
             connection_string = os.getenv("azuresmartsearch3key1conn")
             blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-            container_client = blob_service_client.get_container_client(self.bucket_name)
+            container_client = blob_service_client.get_container_client(bucket_name)
             # מחיקה של הקובץ המקורי
             blob_file = container_client.get_blob_client(target_key)
             if blob_file.exists():
@@ -427,6 +426,12 @@ def browse_gcs_path_logic(self,prefix: str) -> Dict[str, List[str]]:
 # ==============================================================================
 # UNIFIED SYNC & UPLOAD
 # ==============================================================================
+def get_local_md5(file_path):
+    hash_md5 = hashlib.md5()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest() # זה יחזיר 'ea49...'
 
 def get_local_hashes(file_path):
     """Generates both Hex (S3) and Base64 (GCS) MD5 hashes."""
@@ -541,18 +546,8 @@ def check_sync(self, prefix=""):
             full_path = os.path.join(root, f)
             rel_path = os.path.relpath(full_path, local_path).replace("\\", "/")
             hex_md5, b64_md5 = get_local_hashes(full_path)
-            local_files[rel_path] = hex_md5 if use_mode_aws else b64_md5
-
-    index_root = os.path.join(self.provider_info["CLIENT_PREFIX_TO_STRIP"], ".index")
-    if os.path.exists(index_root):
-        for root, _, files in os.walk(index_root):
-            for f in files:
-                if not f.endswith(".json"): continue
-                full_path = os.path.join(root, f)
-                rel_to_index = os.path.relpath(full_path, index_root).replace("\\", "/")
-                rel_path = f".index/{rel_to_index}"
-                hex_md5, b64_md5 = get_local_hashes(full_path)
-                local_files[rel_path] = hex_md5 if use_mode_aws else b64_md5
+            md5 = get_local_md5(full_path)
+            local_files[rel_path] = md5 #hex_md5 if use_mode_aws else b64_md5
 
     # 2. איסוף קבצים מהענן (ללא שינוי)
     cloud_files = {}
@@ -679,11 +674,18 @@ def get_aws_cloud_files_recursive(bucket_name, prefix):
                     continue
 
                 try:
-                    # שליפת ה-Hash מה-Metadata
                     head = s3_client.head_object(Bucket=bucket_name, Key=full_key)
+                    # 1. ניסיון ראשון: המטא-דאטה המותאם אישית שלך (Hex)
                     md5_hash = head.get('Metadata', {}).get('md5-hash')
 
-                    # המפתח הוא הנתיב המלא כפי שהוא מופיע ב-S3
+                    if md5_hash:
+                        # אם בטעות שמרת ב-S3 כ-Base64, זה ימיר ל-Hex
+                        if '==' in str(md5_hash):
+                            import base64
+                            md5_hash = base64.b64decode(md5_hash).hex()
+                        else:
+                            md5_hash = str(md5_hash).strip().lower()
+
                     cloud_files[full_key] = md5_hash
 
                 except Exception as e:

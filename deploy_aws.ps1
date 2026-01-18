@@ -19,7 +19,7 @@ if ($LASTEXITCODE -ne 0) {
 
 
 # Variables
-$ver_name = "v27.2.0"
+$ver_name = "v27.3.0"
 $ECR_URL = "038715112888.dkr.ecr.ap-southeast-2.amazonaws.com/smart-doc-api:$ver_name"
 $SERVICE_ARN = "arn:aws:apprunner:ap-southeast-2:038715112888:service/smart-doc-searcher-api-final/5abc7f51e3a04885bf68e15c4980927f"
 $s3_name = "oren-smart-search-docs-amazon2"

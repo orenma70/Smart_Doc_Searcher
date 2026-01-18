@@ -69,11 +69,25 @@ def get_documents_for_path(directory_path):
                         else:
                             pages.append(p)
 
+
                 except s3.exceptions.NoSuchKey:
-                    # 3. FALLBACK: If Index doesn't exist, create a shell entry
-                    # This prevents the document from "disappearing"
-                    print(f"🔍 Index missing for {filename}. Using fallback path.")
-                    pages = [{"page_number": 1, "lines": ["Content available in original file (Index missing)"]}]
+
+                    print(f"🔍 Index missing for {filename}. Extracting real content...")
+
+                    file_obj = s3.get_object(Bucket=BUCKET_NAME, Key=key)
+                    file_content = file_obj['Body'].read()
+                    extracted_text = ""
+
+                    if filename.lower().endswith('.docx'):
+                        doc_reader = Document(io.BytesIO(file_content))
+                        extracted_text = "\n".join([para.text for para in doc_reader.paragraphs])
+                    elif filename.lower().endswith('.pdf'):
+                        with fitz.open(stream=file_content, filetype="pdf") as pdf:
+                            extracted_text = "\n".join([page.get_text() for page in pdf])
+                    else:
+                        extracted_text = file_content.decode('utf-8', errors='ignore')
+
+                    pages = [{"page_number": 1, "lines": extracted_text.splitlines()}]
 
                 except Exception as e:
                     print(f"⚠️ Error parsing index for {filename}: {e}")
