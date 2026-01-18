@@ -192,60 +192,32 @@ def get_documents_from_cache(directory_path: str) -> Optional[List[Dict[str, Any
     return None
 
 
-def get_documents_for_path(directory_path: str) -> List[Dict[str, Any]]:
-    # 1. נרמול הנתיב (חשוב להתאמה למפתחות בענן)
-    cleaned_path = directory_path.strip("/")
+def get_documents_for_path(directory_path: str, local_mode = False) -> List[Dict[str, Any]]:
+    # 1. Use the v15 Normalization
+    cleaned_path = directory_path.strip("/").lower()
 
-    # 2. ניסיון משיכה מה-Cache (נשאר ללא שינוי - FAST PATH)
+    # 2. FAST PATH (v15 logic)
     cached_docs = get_documents_from_cache(cleaned_path)
     if cached_docs is not None:
+        print(f"CACHE-GET: Exact hit for '{cleaned_path}'.")
         return cached_docs
 
-    # 3. CACHE MISS - שליפה מה-Bucket (SLOW PATH)
-    print(f"CACHE-MISS: Fetching JSON indices for '{cleaned_path}'.")
+    # 3. SLOW PATH (v15 + Debugging)
+    print(f"CACHE-MISS: Fetching from source for '{cleaned_path}'.")
 
-    fetched_documents = []
+    # Ensure your get_gcs_files_context is the v15 version!
+    if local_mode == "True" and not IS_CLOUD_RUN:
+        fetched_documents = get_hd_files_context(cleaned_path, LOCAL_ROOT_PATH)
+    else:
+        # This is where the actual GCS logic from v15 lives
+        fetched_documents = get_gcs_files_context(cleaned_path, BUCKET_NAME)
 
-    try:
-        client = get_storage_client()
-        bucket = client.bucket(BUCKET_NAME)
-
-        # הגדרת ה-prefix לחיפוש הקבצים המקוריים
-        prefix = cleaned_path + "/" if cleaned_path else ""
-        blobs = bucket.list_blobs(prefix=prefix)
-
-        for blob in blobs:
-            key = blob.name
-            # דילוג על תיקיות והתיקייה .index עצמה
-            if key.endswith('/') or key.startswith('.index/'):
-                continue
-
-            # בניית הנתיב לקובץ ה-JSON התואם
-            base_name = os.path.splitext(key)[0]
-            index_key = f".index/{base_name}.json"
-
-            try:
-                index_blob = bucket.blob(index_key)
-                if index_blob.exists():
-                    # הורדת ה-JSON וטעינת הנתונים
-                    json_data = json.loads(index_blob.download_as_text())
-
-                    # בניית האובייקט שהחיפוש מצפה לו
-                    fetched_documents.append({
-                        "name": os.path.basename(key),
-                        "full_path": key,
-                        "pages": json_data.get("pages", []),
-                        # יצירת שדה content שטוח לטובת ה-Gemini (RAG)
-                        "content": "\n".join([" ".join(p.get("lines", [])) for p in json_data.get("pages", [])])
-                    })
-            except Exception as e:
-                print(f"Skipping {key}: Index error: {e}")
-
-    except Exception as e:
-        print(f"🔥 GCS Fetch Error: {e}")
-
-    # 4. שמירה ב-Cache (כדי שהחיפוש הבא יהיה מהיר)
+    # 4. Critical Search Debug: Check if 'content' actually exists
     if fetched_documents:
+        for doc in fetched_documents:
+            if not doc.get("content"):
+                print(f"⚠️ Warning: Document {doc['name']} has NO content! Search will fail.")
+
         put_documents_in_cache(cleaned_path, fetched_documents)
 
     return fetched_documents

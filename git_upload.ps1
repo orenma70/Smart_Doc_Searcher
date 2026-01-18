@@ -13,7 +13,7 @@ if ($confirmation -ne 'y') {
 
 
 # 3. הגדרות גרסה
-$ver = "v26.3.0"
+$ver = "v27.1.0"
 $description = "Azure supports key words search"
 $commit_msg = "$ver $description"
 
