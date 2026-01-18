@@ -4,8 +4,13 @@
 # 1. הצגת סטטוס נוכחי
 git status
 
+
+$ver = "v27.2.0"
+
+
 # 2. בקשת אישור מהמשתמש
-$confirmation = Read-Host "Keep on commit and push to Azure? (y/n)"
+Write-Host "-------------- $ver --------------" -ForegroundColor Cyan
+$confirmation = Read-Host "Keep on commit and push to +++ $ver +++ Azure ? (y/n)"
 if ($confirmation -ne 'y') {
     Write-Host "Operation cancelled by user." -ForegroundColor Yellow
     exit
@@ -13,7 +18,6 @@ if ($confirmation -ne 'y') {
 
 
 # 3. הגדרות גרסה
-$ver = "v27.1.0"
 $description = "Azure supports key words search"
 $commit_msg = "$ver $description"
 

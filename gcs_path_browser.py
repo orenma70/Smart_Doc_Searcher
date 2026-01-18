@@ -18,8 +18,8 @@ import pytesseract
 from PIL import Image
 from docx import Document
 import json
-from azure.storage.blob import BlobServiceClient
-
+from azure.storage.blob import BlobServiceClient, ContentSettings
+import base64
 
 
 # Set your flag here based on your environment
@@ -31,66 +31,76 @@ gcs_client: Optional[storage.Client] = None
 s3_client: Any = None
 KMS_KEY_ARN = "arn:aws:kms:ap-southeast-2:038715112888:key/82ae7f3a-eb41-4f29-bd2c-85b9ab573023"
 
+def  get_gcs_files_recursive(bucket_name, prefix):
+    global gcs_client
 
-
+    cloud_files = {}
+    if gcs_client is None: gcs_client = get_storage_client()
+    bucket = gcs_client.bucket(bucket_name)
+    for blob in bucket.list_blobs(prefix=prefix):
+        name = blob.name[len(prefix):].lstrip("/")
+        if name: cloud_files[name] = blob.md5_hash
+    index_prefix = f".index/{prefix}".replace("//", "/")
+    for blob in bucket.list_blobs(prefix=index_prefix):
+        name = blob.name
+        if name: cloud_files[name] = blob.md5_hash
+    return cloud_files
 
 def get_azure_files_recursive(container_name, prefix):
-    # התחברות ללקוח (יש להגדיר CONNECTION_STRING במערכת)
+    # 1. התחברות ללקוח
     connection_string = os.getenv("azuresmartsearch3key1conn")
+    if not connection_string:
+        print("❌ Azure Error: Connection string not found.")
+        return {}
+
+    from azure.storage.blob import BlobServiceClient
     blob_service_client = BlobServiceClient.from_connection_string(connection_string)
     container_client = blob_service_client.get_container_client(container_name)
 
     cloud_files = {}
 
-    # יצירת רשימת prefixes לסריקה
-    prefixes_to_scan = [prefix]
-    if prefix:
-        clean_prefix = prefix.strip('/')
-        prefixes_to_scan.append(f".index/{clean_prefix}")
+    # 2. הכנת ה-search_prefix
+    # אם prefix ריק או None, name_starts_with יהיה None ו-Azure יסרוק את כל ה-Container
+    search_prefix = prefix if prefix and prefix.strip() else None
 
-    for current_scan_prefix in prefixes_to_scan:
-        search_prefix = current_scan_prefix
-        if search_prefix and not search_prefix.endswith('/'):
-            search_prefix += '/'
+    # מוודא שה-prefix מסתיים ב-/ כדי לסרוק תוכן תיקייה בלבד
+    if search_prefix and not search_prefix.endswith('/'):
+        search_prefix += '/'
 
-        # ב-Azure, list_blobs מחזיר גנרטור שעושה Pagination אוטומטי
-        blobs = container_client.list_blobs(name_starts_with=search_prefix)
+    try:
+        # 3. סריקת ה-Blobs (Azure עושה Pagination אוטומטי)
+        blobs = container_client.list_blobs(name_starts_with=search_prefix, include=['metadata'])
 
         for blob in blobs:
             full_key = blob.name
 
-            if full_key == search_prefix:
+            # דילוג על התיקייה עצמה
+            if search_prefix and full_key == search_prefix:
                 continue
 
-            # חילוץ שם הקובץ היחסי
-            name = full_key[len(search_prefix):]
-
-            # סינון קבצים זמניים (לפי הלוגיקה שלך)
-            if any(pattern in name for pattern in ['$', '~$', '$~']):
+            # סינון קבצים זמניים
+            file_name_only = full_key.split('/')[-1]
+            if any(x in file_name_only for x in ['$~', '~$']) or file_name_only.startswith('$'):
                 continue
 
             try:
-                # ב-Azure ה-MD5 נמצא לרוב ב-blob.content_settings.content_md5
-                # הוא מגיע בפורמט bytes של Base64, לכן נהפוך אותו לסטרינג
-                md5_hash = None
-                if blob.content_settings.content_md5:
+                # 4. חילוץ ה-MD5
+                # מחפשים קודם ב-Metadata (בפורמט Hex ששמרנו ב-upload_to_cloud)
+                md5_hash = blob.metadata.get('md5_hash') or blob.metadata.get('md5-hash')
+
+                # אם אין ב-Metadata, ננסה לשלוף את ה-Hash המובנה של Azure (Base64)
+                if not md5_hash and blob.content_settings.content_md5:
                     import base64
                     md5_hash = base64.b64encode(blob.content_settings.content_md5).decode('utf-8')
 
-                # אם ה-MD5 לא שם, אפשר לחפש ב-Metadata (אם שמרת אותו שם ידנית)
-                if not md5_hash:
-                    md5_hash = blob.metadata.get('md5_hash')
-
-                # בניית המפתח למילון (תאימות ל-GUI)
-                dict_key = name
-                if full_key.startswith(".index/"):
-                    clean_p = prefix.strip('/')
-                    dict_key = f".index/{clean_p}/{name}".replace("//", "/")
-
-                cloud_files[dict_key] = md5_hash
+                # המפתח הוא הנתיב המלא ב-Container (כולל .index אם קיים בנתיב)
+                cloud_files[full_key] = md5_hash
 
             except Exception as e:
-                print(f"Error processing metadata for blob {full_key}: {e}")
+                print(f"Error processing blob {full_key}: {e}")
+
+    except Exception as e:
+        print(f"Error scanning Azure container {container_name}: {e}")
 
     return cloud_files
 
@@ -251,147 +261,77 @@ def extract_text_for_indexing(file_bytes, file_ext):
     return pages_data, used_ocr
 
 
-def upload_to_cloud(self,local_folder, filename, base_folder):
-    # נרמול נתיבים
-    cloud_provider = self.provider_info["cloud_provider"]
-    use_mode_aws = cloud_provider == "Amazon"
-    use_mode_azr = cloud_provider == "Microsoft"
-    use_mode_clr = cloud_provider == "Google"
+def upload_to_cloud(self, local_folder, filename, base_folder):
+    # 1. Identify Cloud Provider
+    cloud_provider = self.provider_info.get("cloud_provider")
+    use_mode_aws = (cloud_provider == "Amazon")
+    use_mode_azr = (cloud_provider == "Microsoft")
+    use_mode_clr = (cloud_provider == "Google")
 
+    # 2. Normalize paths and define target
     local_folder = os.path.normpath(local_folder)
     base_folder = os.path.normpath(base_folder)
-    pdf_path = os.path.join(local_folder, filename)
+    file_path = os.path.join(local_folder, filename)
 
-    # חילוץ נתיבים יחסיים
+    # Create the exact same path structure in the cloud
     relative_dir = os.path.relpath(local_folder, base_folder).replace("\\", "/")
-    relative_file_path = f"{relative_dir}/{filename}".replace("//", "/")
-
-    base_name = os.path.splitext(filename)[0]
-    local_index_path = os.path.join(base_folder, ".index", relative_dir, f"{base_name}.json")
-    cloud_index_key = f".index/{relative_dir}/{base_name}.json".replace("//", "/")
-
-    os.makedirs(os.path.dirname(local_index_path), exist_ok=True)
+    if relative_dir == ".": relative_dir = ""
+    relative_file_path = f"{relative_dir}/{filename}".replace("//", "/").strip("/")
 
     try:
-        pages_data = None
-        if os.path.exists(local_index_path):
-            try:
-                with open(local_index_path, "r", encoding="utf-8") as f:
-                    pages_data = json.load(f)
-                    was_ocr_needed = True
-                    with open(pdf_path, "rb") as f:
-                        pdf_bytes = f.read()
+        if not os.path.exists(file_path):
+            print(f"❌ File not found: {file_path}")
+            return
 
-                print(f"--- [Fast Path] Loaded existing index for {filename} ---")
-            except Exception as e:
-                print(f"Error reading existing index: {e}, re-indexing...")
+        # 3. Get Hashes (Required for metadata and integrity)
+        with open(file_path, "rb") as f:
+            file_bytes = f.read()
 
-        # --- רק אם לא מצאנו JSON מוכן, נריץ את החילוץ הכבד ---
-        if pages_data is None:
+        pdf_hex_md5 = hashlib.md5(file_bytes).hexdigest()
+        # Using your existing helper for base64 hash (required by Azure/Google)
+        hex_md5, b64_md5 = get_local_hashes(file_path)
 
-            with open(pdf_path, "rb") as f:
-                pdf_bytes = f.read()
+        bucket_name = self.provider_info["BUCKET_NAME"]
 
-            file_ext = os.path.splitext(filename)[1].lower()
-            pages_data, was_ocr_needed = extract_text_for_indexing(pdf_bytes, file_ext)
-
-        # Hash של ה-PDF
-        pdf_hex_md5 = hashlib.md5(pdf_bytes).hexdigest()
-        hex_md5, b64_md5 = get_local_hashes(pdf_path)
-        index_data = {
-            "filename": filename,
-            "pages": pages_data,
-            "ocr_used": was_ocr_needed,
-            "md5_hash": pdf_hex_md5,
-            "timestamp": time.time()
-        }
-
-        # יצירת ה-JSON כ-Bytes (למניעת בעיות Encoding/Newline בווינדוס)
-        json_payload = json.dumps(index_data, ensure_ascii=False, indent=4).encode('utf-8')
-        json_hex_md5 = hashlib.md5(json_payload).hexdigest()
-
-        # שמירה כבינארי (wb)
-        with open(local_index_path, "wb") as f:
-            f.write(json_payload)
-
+        # 4. PERFORM UPLOAD
+        # --- Amazon AWS ---
         if use_mode_aws:
             client = get_s3_client()
-            # העלאת PDF
-            client.upload_file(pdf_path, self.provider_info["BUCKET_NAME"], relative_file_path, ExtraArgs={
+            client.upload_file(file_path, bucket_name, relative_file_path, ExtraArgs={
                 'Metadata': {'md5-hash': pdf_hex_md5}
             })
-            # העלאת JSON
-            client.put_object(
-                Body=json_payload,
-                Bucket=self.provider_info["BUCKET_NAME"],
-                Key=cloud_index_key,
-                ContentType='application/json',
-                Metadata={'md5-hash': json_hex_md5}
-            )
-            print(f"✅ Uploaded: {filename} (JSON MD5: {json_hex_md5})")
+            print(f"✅ Uploaded to Amazon: {filename}")
+
+        # --- Google Cloud ---
         elif use_mode_clr:
             client = get_storage_client()
-            bucket = client.bucket(self.provider_info["BUCKET_NAME"])
-
+            bucket = client.bucket(bucket_name)
             blob_file = bucket.blob(relative_file_path)
             blob_file.md5_hash = b64_md5
-            blob_file.metadata = {'md5-hash': pdf_hex_md5}  # שומרים גם Hex למען האחידות עם AWS
-            blob_file.upload_from_filename(pdf_path)
+            blob_file.metadata = {'md5-hash': pdf_hex_md5}
+            blob_file.upload_from_filename(file_path)
+            print(f"✅ Uploaded to Google: {filename}")
 
-            blob_index = bucket.blob(cloud_index_key)
-            import base64
-            json_b64_md5 = base64.b64encode(hashlib.md5(json_payload).digest()).decode('utf-8')
-            blob_index.md5_hash = json_b64_md5
-
-            blob_index.metadata = {'md5-hash': json_hex_md5}
-
-            blob_index.content_type = 'application/json'
-
-            # העלאה ישירות מהזיכרון (כמו put_object)
-
-            blob_index.upload_from_string(json_payload, content_type='application/json')
-
-            print(f"✅ Uploaded to Google: {filename} (JSON MD5: {json_hex_md5})")
+        # --- Microsoft Azure ---
         elif use_mode_azr:
             connection_string = os.getenv("azuresmartsearch3key1conn")
-            blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-            container_client = blob_service_client.get_container_client(self.provider_info["BUCKET_NAME"])
+            if not connection_string: raise Exception("Azure connection string missing")
 
-            # 1. העלאת קובץ ה-PDF
+            from azure.storage.blob import BlobServiceClient, ContentSettings
+            import base64
+
+            blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+            container_client = blob_service_client.get_container_client(bucket_name)
             blob_file = container_client.get_blob_client(relative_file_path)
 
-            import base64
-            # Azure דורש את ה-MD5 בפורמט Bytes לצורך אימות (Integrity check)
             md5_bytes = base64.b64decode(b64_md5)
-
-            from azure.storage.blob import ContentSettings
-
-            with open(pdf_path, "rb") as data:
-                blob_file.upload_blob(
-                    data,
-                    overwrite=True,
-                    content_settings=ContentSettings(content_md5=md5_bytes),
-                    # שומרים את ה-Hex ב-Metadata כדי שיהיה לך קל להשוות עם AWS
-                    metadata={'md5_hash': pdf_hex_md5}
-                )
-
-            # 2. העלאת קובץ ה-JSON (האינדקס)
-            blob_index = container_client.get_blob_client(cloud_index_key)
-
-            # חישוב MD5 ל-JSON (בפורמט Bytes עבור Azure)
-            json_md5_bytes = hashlib.md5(json_payload).digest()
-
-            blob_index.upload_blob(
-                json_payload,
+            blob_file.upload_blob(
+                file_bytes,
                 overwrite=True,
-                content_settings=ContentSettings(
-                    content_type='application/json; charset=utf-8',  # מונע ג'יבריש בעברית
-                    content_md5=json_md5_bytes
-                ),
-                metadata={'md5_hash': json_hex_md5}
+                content_settings=ContentSettings(content_md5=md5_bytes),
+                metadata={'md5_hash': pdf_hex_md5}
             )
-
-            print(f"✅ Uploaded to Azure: {filename} (JSON MD5: {json_hex_md5})")
+            print(f"✅ Uploaded to Azure: {filename}")
 
     except Exception as e:
         print(f"❌ Error in upload: {e}")
@@ -584,10 +524,10 @@ def md5_of_file(path):
     return base64.b64encode(binascii.unhexlify(hash_md5.hexdigest())).decode("utf-8")
 
 
-def check_sync(self,local_path, bucket_name, prefix=""):
-    """
-    גרסה מעודכנת המבוססת על הקוד המקורי - שואלת פעם אחת על הכל.
-    """
+def check_sync(self, prefix=""):
+    local_path = self.provider_info.get("CLIENT_PREFIX_TO_STRIP")
+    bucket_name = self.provider_info.get("BUCKET_NAME")
+
     # 1. איסוף קבצים מקומיים וה-Hashes שלהם (ללא שינוי)
     cloud_provider = self.provider_info["cloud_provider"]
     use_mode_aws = cloud_provider  == "Amazon"
@@ -617,20 +557,12 @@ def check_sync(self,local_path, bucket_name, prefix=""):
     # 2. איסוף קבצים מהענן (ללא שינוי)
     cloud_files = {}
     if use_mode_aws:
-        cloud_files = get_cloud_files_recursive(bucket_name, prefix)
+        cloud_files = get_aws_cloud_files_recursive(bucket_name, prefix)
     elif use_mode_azr:
         cloud_files = get_azure_files_recursive(bucket_name, prefix)
     elif use_mode_clr:
-        global gcs_client
-        if gcs_client is None: gcs_client = get_storage_client()
-        bucket = gcs_client.bucket(bucket_name)
-        for blob in bucket.list_blobs(prefix=prefix):
-            name = blob.name[len(prefix):].lstrip("/")
-            if name: cloud_files[name] = blob.md5_hash
-        index_prefix = f".index/{prefix}".replace("//", "/")
-        for blob in bucket.list_blobs(prefix=index_prefix):
-            name = blob.name
-            if name: cloud_files[name] = blob.md5_hash
+        cloud_files = get_gcs_files_recursive(bucket_name, prefix)
+
 
     # 3. השוואת סטים (הלוגיקה המקורית שלך)
     missing_in_cloud = set(local_files) - set(cloud_files)
@@ -718,57 +650,47 @@ def list_s3_contents(bucket, prefix):
             print(f"File: {obj['Key']} | Size: {obj['Size']} bytes")
 
 
-def get_cloud_files_recursive(bucket_name, prefix):
+def get_aws_cloud_files_recursive(bucket_name, prefix):
     s3_client = get_s3_client()
     cloud_files = {}
 
-    # יצירת רשימת prefixes: המקורי שלך, והמקביל לו בתוך .index
-    # אם prefix הוא "גירושין", נסרוק גם את ".index/גירושין"
-    prefixes_to_scan = [prefix]
-    if prefix:
-        # מוודא שהנתיב לאינדקס נבנה נכון
-        clean_prefix = prefix.strip('/')
-        prefixes_to_scan.append(f".index/{clean_prefix}")
+    # הכנת הפרמטרים לסריקה
+    list_args = {'Bucket': bucket_name}
 
-    for current_scan_prefix in prefixes_to_scan:
-        # --- תחילת הקוד המקורי שלך (ללא שינוי בשורות) ---
-        search_prefix = current_scan_prefix
-        if search_prefix and not search_prefix.endswith('/'):
-            search_prefix += '/'
+    # אם יש פריפיקס, נוסיף אותו (מוודא שהוא נגמר ב-/ כדי לסרוק תוכן תיקייה)
+    if prefix and prefix.strip():
+        search_prefix = prefix if prefix.endswith('/') else f"{prefix}/"
+        list_args['Prefix'] = search_prefix
 
-        paginator = s3_client.get_paginator('list_objects_v2')
+    paginator = s3_client.get_paginator('list_objects_v2')
 
-        for page in paginator.paginate(Bucket=bucket_name, Prefix=search_prefix):
+    try:
+        # paginate יסרוק הכל אם אין Prefix, או רק תת-נתיב אם יש
+        for page in paginator.paginate(**list_args):
             for obj in page.get('Contents', []):
                 full_key = obj['Key']
 
-                if full_key == search_prefix:
+                # דילוג על שם התיקייה עצמה
+                if prefix and full_key == list_args.get('Prefix'):
                     continue
 
-                # שמירה על הלוגיקה המקורית שלך לחילוץ השם
-                name = full_key[len(search_prefix):]
-
-                # סינון קבצים זמניים בדיוק כפי שהגדרת
-                if name.startswith('$') or name.startswith('~$') or name.startswith(
-                        '$~') or '~$' in name or '$~' in name:
+                # סינון קבצים זמניים של אופיס
+                if any(x in full_key for x in ['$~', '~$']) or full_key.split('/')[-1].startswith('$'):
                     continue
 
                 try:
+                    # שליפת ה-Hash מה-Metadata
                     head = s3_client.head_object(Bucket=bucket_name, Key=full_key)
                     md5_hash = head.get('Metadata', {}).get('md5-hash')
 
-                    # אם אנחנו בסריקה של אינדקס, נשמור את השם עם הקידומת המתאימה
-                    # כדי שה-GUI יזהה שמדובר בקובץ מהתיקייה הנסתרת
-                    dict_key = name
-                    if full_key.startswith(".index/"):
-                        # בונה את השם כך שיכלול את המבנה שה-GUI מצפה לו ב-.index
-                        dict_key = f".index/{clean_prefix}/{name}".replace("//", "/")
-
-                    cloud_files[dict_key] = md5_hash
+                    # המפתח הוא הנתיב המלא כפי שהוא מופיע ב-S3
+                    cloud_files[full_key] = md5_hash
 
                 except Exception as e:
                     print(f"Error fetching metadata for {full_key}: {e}")
-        # --- סוף הקוד המקורי שלך ---
+
+    except Exception as e:
+        print(f"Error scanning bucket {bucket_name} (Prefix: {prefix}): {e}")
 
     return cloud_files
 

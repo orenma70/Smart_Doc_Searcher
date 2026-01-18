@@ -357,7 +357,7 @@ def should_skip_file(filename: str) -> bool:
 
     return False
 
-def display_gemini_result(self, results_area: QtWidgets.QTextEdit, answer: str, path: str):
+def display_aws_cldrun_result(self, results_area: QtWidgets.QTextEdit, answer: str, path: str):
     """
     Handles displaying the Gemini answer in the results area.
 
@@ -387,7 +387,7 @@ def display_gemini_result(self, results_area: QtWidgets.QTextEdit, answer: str, 
 
         # Use <p> tags for clear line separation, relying on append() for the initial block
         formatted_html = (
-            f"<p dir='rtl'><b>    Gemini :  </b></p>"
+            f"<p dir='rtl'><b>    {self.provider_info["cloud_provider"]} :  </b></p>"
             f"<p dir='rtl'><b>  {path}   </b></p>"
             f"<p dir='rtl'>{answer}</p>"
             f"<p dir='rtl'><b>    +++++++++++++++++++++ :  </b></p>"
@@ -1010,7 +1010,7 @@ class SearchApp(QtWidgets.QWidget):
 
         self.resize(1800, 1200)
 
-        result = check_sync(self,self.provider_info["CLIENT_PREFIX_TO_STRIP"]+"/גירושין/", self.provider_info["BUCKET_NAME"], prefix='גירושין' )
+        result = check_sync(self,prefix='')
 
         sync0 = result["sync!"]
         self.sync0 = sync0
@@ -1201,7 +1201,7 @@ class SearchApp(QtWidgets.QWidget):
 
 
                     #perform_search(query, directory_path=folder)
-                    display_gemini_result(self, self.results_area, answer, folder_in)
+                    display_aws_cldrun_result(self, self.results_area, answer, folder_in)
 
                     if self.non_cloud_gemini_radio.isChecked():
                         self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
@@ -1285,7 +1285,7 @@ class SearchApp(QtWidgets.QWidget):
 
 
                             # Example usage (assuming this function is part of a class):
-                                display_gemini_result(self, self.results_area, answer, str(path))
+                                display_aws_cldrun_result(self, self.results_area, answer, str(path))
 
                             else:
                                 matches = docx_search(self, path, words, mode, search_mode)
@@ -1307,7 +1307,7 @@ class SearchApp(QtWidgets.QWidget):
                                 elif pdf_text:
                                     answer = ask_gemini_with_context(pdf_text, query)
 
-                                display_gemini_result(self, self.results_area, answer, str(path))
+                                display_aws_cldrun_result(self, self.results_area, answer, str(path))
 
 
                             else:
@@ -1674,7 +1674,7 @@ class SearchApp(QtWidgets.QWidget):
             #self.display_root.setText(white_cloud + black_bucket)
 
             self.display_root.setText("☁️ Bucket")
-            result = check_sync(self.provider_info["CLIENT_PREFIX_TO_STRIP"]+"/גירושין/", self.provider_info["BUCKET_NAME"], prefix='גירושין')
+            result = check_sync(self, prefix='')
             sync0 = result["sync!"]
             self.sync0 = sync0
             self.update_gcs_radio()

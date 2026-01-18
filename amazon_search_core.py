@@ -6,10 +6,19 @@ import io
 import fitz  # PyMuPDF - כבר נמצא ב-requirements שלך
 from docx import Document  # כבר נמצא ב-requirements שלך
 import pytesseract
-from amazon_search_utilities import match_line, highlight_matches_html, search_in_json_content, run_textract_and_save_index
+from amazon_search_utilities import match_line, highlight_matches_html, search_in_json_content
 from PIL import Image
 import shutil
 import json
+import config_reader
+
+cloud_provider="Amazon"
+PROVIDER_CONFIG=config_reader.set_provider_config(cloud_provider)
+
+BUCKET_NAME = PROVIDER_CONFIG["BUCKET_NAME"]
+
+
+
 
 # בדיקה והגדרה של נתיב Tesseract
 tesseract_bin = shutil.which("tesseract")
@@ -26,51 +35,51 @@ app = Flask(__name__)
 s3 = boto3.client('s3')
 # --- AWS Configuration ---
 
-
-def get_documents_for_path(self,directory_path):
+def get_documents_for_path(directory_path):
     documents = []
     try:
         paginator = s3.get_paginator('list_objects_v2')
         base_prefix = directory_path.strip('/') + '/' if directory_path else ""
 
-        for page in paginator.paginate(Bucket=self.provider_info["BUCKET_NAME"], Prefix=base_prefix):
+        for page in paginator.paginate(Bucket=BUCKET_NAME, Prefix=base_prefix):
             if 'Contents' not in page: continue
 
             for obj in page['Contents']:
                 key = obj['Key']
                 filename = key.split('/')[-1]
+
+                # Skip folders and existing index folder
                 if key.endswith('/') or filename.startswith('~$') or key.startswith('.index/'):
                     continue
 
                 base_path = key.rsplit('.', 1)[0] if '.' in key else key
                 index_key = f".index/{base_path}.json".replace("//", "/")
 
+                pages = []
                 try:
-                    idx_resp = s3.get_object(Bucket=self.provider_info["BUCKET_NAME"], Key=index_key)
+                    # 1. Attempt to load JSON Index
+                    idx_resp = s3.get_object(Bucket=BUCKET_NAME, Key=index_key)
                     index_data = json.loads(idx_resp['Body'].read().decode('utf-8'))
+                    raw_pages = index_data.get("pages", [])
 
-                    # תיקון 1: וידוא שליפה אחידה של המפתח "pages"
-                    pages = index_data.get("pages", [])
+                    # 2. FIX: Ensure pages is a list of DICTS, not strings (Fixes AttributeError)
+                    for idx, p in enumerate(raw_pages):
+                        if isinstance(p, str):
+                            pages.append({"page_number": idx + 1, "lines": [p]})
+                        else:
+                            pages.append(p)
 
                 except s3.exceptions.NoSuchKey:
-                    print(f"🔍 Index missing for {filename}. Starting Advanced Textract Analysis...")
-                    try:
-                        # תיקון 2: הפונקציה החדשה מחזירה True רק כשהיא מסיימת את כל 37 העמודים
-                        success = run_textract_and_save_index(self.provider_info["BUCKET_NAME"], key)
+                    # 3. FALLBACK: If Index doesn't exist, create a shell entry
+                    # This prevents the document from "disappearing"
+                    print(f"🔍 Index missing for {filename}. Using fallback path.")
+                    pages = [{"page_number": 1, "lines": ["Content available in original file (Index missing)"]}]
 
-                        if success:
-                            # קריאה מחדש של האינדקס (עכשיו הוא מכיל עברית וגם את כל העמודים)
-                            idx_resp = s3.get_object(Bucket=self.provider_info["BUCKET_NAME"], Key=index_key)
-                            index_data = json.loads(idx_resp['Body'].read().decode('utf-8'))
-                            pages = index_data.get("pages", [])
-                        else:
-                            continue
-                    except Exception as ocr_e:
-                        print(f"❌ OCR Failed for {key}: {ocr_e}")
-                        continue
+                except Exception as e:
+                    print(f"⚠️ Error parsing index for {filename}: {e}")
+                    continue
 
-                if not pages: continue
-
+                # 4. Success: Document is now searchable even without a perfect index
                 documents.append({
                     "name": filename,
                     "full_path": key,

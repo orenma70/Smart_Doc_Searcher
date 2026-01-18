@@ -2,11 +2,24 @@
 # passwors lost rerun this
 
 
-Write-Host "--- 0. login  ---" -ForegroundColor Cyan
+Write-Host "--- 0. login+Checking Docker Status  ---" -ForegroundColor Cyan
 aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin 038715112888.dkr.ecr.ap-southeast-2.amazonaws.com
 
+
+
+# Check if the docker command exists and if the engine is responding
+docker info >$null 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "X - ERROR: Docker Desktop is not running!" -ForegroundColor Red
+    Write-Host "Please start Docker Desktop and wait for the green light, then run this script again." -ForegroundColor Yellow
+    exit
+} else {
+    Write-Host "V - Docker Desktop is running!" -ForegroundColor Green
+}
+
+
 # Variables
-$ver_name = "v22.3.0"
+$ver_name = "v27.2.0"
 $ECR_URL = "038715112888.dkr.ecr.ap-southeast-2.amazonaws.com/smart-doc-api:$ver_name"
 $SERVICE_ARN = "arn:aws:apprunner:ap-southeast-2:038715112888:service/smart-doc-searcher-api-final/5abc7f51e3a04885bf68e15c4980927f"
 $s3_name = "oren-smart-search-docs-amazon2"
@@ -51,7 +64,7 @@ while ($true) {
     $status = aws apprunner describe-service --service-arn $SERVICE_ARN --query "Service.Status" --output text
     
     # הדפסת סטטוס עם זמן מצטבר
-    Write-Host "Current Status: $status (Elapsed: ${total_sec}s)" -ForegroundColor Cyan
+    Write-Host "Current Status: $status (Elapsed: ${total_sec}s)" 
     
     if ($status -eq "RUNNING") {
         Write-Host "--- Deployment Successful! ---" -ForegroundColor Green
@@ -61,7 +74,7 @@ while ($true) {
         Start-Sleep -Seconds 10
         
         $url = aws apprunner describe-service --service-arn $SERVICE_ARN --query "Service.ServiceUrl" --output text
-        $fullUrl = "https://$url"
+        $fullUrl = "https://$url/version"
         
         Write-Host "Opening: $fullUrl" -ForegroundColor Green
         Start-Process $fullUrl
