@@ -5,12 +5,12 @@
 git status
 
 
-$ver = "v27.3.0"
-
+$ver = "v27.4.0"
+$comment = "update gcs_path_browser"
 
 # 2. בקשת אישור מהמשתמש
 Write-Host "-------------- $ver --------------" -ForegroundColor Cyan
-$confirmation = Read-Host "Keep on commit and push to +++ $ver +++ Azure ? (y/n)"
+$confirmation = Read-Host "Keep on commit and push to +++ $ver +++  ? (y/n)"
 if ($confirmation -ne 'y') {
     Write-Host "Operation cancelled by user." -ForegroundColor Yellow
     exit
@@ -18,7 +18,7 @@ if ($confirmation -ne 'y') {
 
 
 # 3. הגדרות גרסה
-$description = "Azure supports key words search"
+$description = $comment
 $commit_msg = "$ver $description"
 
 Write-Host "--- Preparing to Push Version: $ver ---" -ForegroundColor Cyan

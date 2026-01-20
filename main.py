@@ -23,7 +23,7 @@ from google.genai import types
 import tempfile
 from search_core import simple_keyword_search
 from document_parsers import extract_text_and_images_from_pdf, get_json_index_if_exists, search_in_json_content, paragraph_matches
-from gcs_path_browser import GCSBrowserDialog, check_sync
+from gcs_path_browser import GCSBrowserDialog, check_sync, update_gcs_radio
 from email_option_gui import launch_search_dialog
 from email_searcher import EmailSearchWorker, EMAIL_PROVIDERS
 from outlook_searcher import OutlookAPISearcher
@@ -32,7 +32,6 @@ from icloud_searcher import ICloudAPISearcher
 from speech2text import StopDialog
 from utils import get_remote_version, QRadioButton_STYLE_QSS_green_1515bg, QRadioButton_STYLE_QSS_green_1520bg, CHECKBOX_STYLE_QSS_green, CHECKBOX_STYLE_QSS_red
 from search_utilities import initialize_all_clients
-from ui_setup import non_sync_cloud_str, sync_cloud_str
 import pytesseract
 from utils import CHECKBOX_STYLE_QSS_black, CHECKBOX_STYLE_QSS_gray, Container_STYLE_QSSgray, Container_STYLE_QSS
 from config_reader import CLOUD_PROVIDERS
@@ -759,7 +758,7 @@ def docx2pdf_search(path, words, mode='any', search_mode='partial'):
     pdf_path = os.path.join(os.getcwd(), "tempXX.pdf")
     convert_docx2pdf(path, pdf_path)
     results = pdf_search( path, words, mode, search_mode, pdf_path)
-    # Optionally delete the temp.pdf here if not done inside pdf_search
+
     try:
         os.remove(pdf_path)
     except:
@@ -922,8 +921,6 @@ def docx_search(self, path, words, mode='any', search_mode='partial'):
         for para in doc.paragraphs:
             full_text = para.text or ""
             if paragraph_matches(full_text, words, mode, search_mode):
-                #results = docx2pdf_search(path, words, mode, search_mode)
-                #return results
 
                 full_paragraph = (
                     f"{path}  <br><br> {full_text} <br>"
@@ -1004,17 +1001,10 @@ class SearchApp(QtWidgets.QWidget):
 
 
         if self.update_app_title:
-
             self.set_window_title()
 
-
         self.resize(1800, 1200)
-
-        result = check_sync(self,prefix='')
-
-        sync0 = result["sync!"]
-        self.sync0 = sync0
-        self.update_gcs_radio()
+        check_sync(self,prefix='')
 
 
     def speech2text_handler(self):
@@ -1319,9 +1309,6 @@ class SearchApp(QtWidgets.QWidget):
                                     matches = search_in_json_content(path, json_data.get("pages", []), words, mode, search_mode)
                                 else:
                                     matches = pdf_search(self, path, words, mode, search_mode)
-
-                            # matches2 = pdf_search_flags(path, words, search_mode)
-
 
                             for paragraph in matches:
                                 self.append_result2(path, paragraph, words, search_mode )
@@ -1648,13 +1635,7 @@ class SearchApp(QtWidgets.QWidget):
         except:
             pass
 
-    def update_gcs_radio(self):
-        if self.sync0:
-            self.cloud_gemini_radio.setText(sync_cloud_str)
-            self.display_root.setStyleSheet("color: white; background-color: black;")
-        else:
-            self.cloud_gemini_radio.setText(non_sync_cloud_str)
-            self.display_root.setStyleSheet("color: red; background-color: black;")
+
 
 
     def handle_radio_check(self):
@@ -1674,20 +1655,17 @@ class SearchApp(QtWidgets.QWidget):
             #self.display_root.setText(white_cloud + black_bucket)
 
             self.display_root.setText("☁️ Bucket")
-            result = check_sync(self, prefix='')
-            sync0 = result["sync!"]
-            self.sync0 = sync0
-            self.update_gcs_radio()
-            if self.sync0:
-                self.display_root.setStyleSheet("color: white; background-color: lightblue;")
-            else:
-                self.display_root.setStyleSheet("color: red; background-color: lightblue;")
+            self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
+            self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_gray)
+            QtWidgets.QApplication.processEvents()
+
+            check_sync(self, prefix='')
+
 
             if self.update_app_title:
                 self.set_window_title()
 
-            self.cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_black)
-            self.non_cloud_gemini_radio.setStyleSheet(CHECKBOX_STYLE_QSS_gray)
+
 
     def append_result(self, filepath, paragraph, search_terms):
         # Highlight search terms in paragraph

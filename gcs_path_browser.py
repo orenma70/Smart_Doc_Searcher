@@ -17,10 +17,10 @@ import fitz  # PyMuPDF
 import pytesseract
 from PIL import Image
 from docx import Document
-import json
+from ui_setup import non_sync_cloud_str, sync_cloud_str
 from azure.storage.blob import BlobServiceClient, ContentSettings
 import base64
-
+from config_reader import PROVIDER_CONFIG
 
 # Set your flag here based on your environment
 
@@ -31,19 +31,29 @@ gcs_client: Optional[storage.Client] = None
 s3_client: Any = None
 KMS_KEY_ARN = "arn:aws:kms:ap-southeast-2:038715112888:key/82ae7f3a-eb41-4f29-bd2c-85b9ab573023"
 
-def  get_gcs_files_recursive(bucket_name, prefix):
+def  get_gcs_files_recursive(bucket_name, prefix = ""):
     global gcs_client
+    GCS_OCR_OUTPUT_PATH = PROVIDER_CONFIG.get("GCS_OCR_OUTPUT_PATH")
+
+    skip_folder_name = GCS_OCR_OUTPUT_PATH.rstrip('/').split('/')[-1]
 
     cloud_files = {}
     if gcs_client is None: gcs_client = get_storage_client()
     bucket = gcs_client.bucket(bucket_name)
     for blob in bucket.list_blobs(prefix=prefix):
+        if blob.name.startswith(f"{skip_folder_name}/") or blob.name == skip_folder_name:
+            continue
+
         name = blob.name[len(prefix):].lstrip("/")
-        if name: cloud_files[name] = blob.md5_hash
-    index_prefix = f".index/{prefix}".replace("//", "/")
-    for blob in bucket.list_blobs(prefix=index_prefix):
-        name = blob.name
-        if name: cloud_files[name] = blob.md5_hash
+        if name:
+            # 3. פתרון ה-MD5: המרה מ-Base64 ל-Hex
+            # זה יהפוך את 'anKb...' ל-'6a72...' ויתאים ל-Local שלך
+            raw_md5 = blob.md5_hash
+            if raw_md5:
+                cloud_files[name] = base64.b64decode(raw_md5).hex()
+            else:
+                cloud_files[name] = None
+
     return cloud_files
 
 def get_azure_files_recursive(container_name, prefix):
@@ -335,6 +345,54 @@ def upload_to_cloud(self, local_folder, filename, base_folder):
     except Exception as e:
         print(f"❌ Error in upload: {e}")
 
+
+def download_from_cloud(self, local_folder, filename):
+    # 1. זיהוי ספק הענן
+    cloud_provider = self.provider_info.get("cloud_provider")
+    use_mode_aws = (cloud_provider == "Amazon")
+    use_mode_azr = (cloud_provider == "Microsoft")
+    use_mode_clr = (cloud_provider == "Google")
+
+    # 2. הגדרת נתיבי יעד מקומיים
+    # filename יכול להיות למשל ".index/doc1.json"
+    full_local_path = os.path.join(local_folder, filename)
+    bucket_name = self.provider_info["BUCKET_NAME"]
+
+    # וודא שתיקיית היעד קיימת (למשל יצירת תיקיית .index אם היא חסרה)
+    os.makedirs(os.path.dirname(full_local_path), exist_ok=True)
+
+    try:
+        # 3. ביצוע הורדה
+        # --- Amazon AWS ---
+        if use_mode_aws:
+            client = get_s3_client()
+            client.download_file(bucket_name, filename, full_local_path)
+            print(f"✅ Downloaded from Amazon: {filename}")
+
+        # --- Google Cloud ---
+        elif use_mode_clr:
+            client = get_storage_client()
+            bucket = client.bucket(bucket_name)
+            blob = bucket.blob(filename)
+            blob.download_to_filename(full_local_path)
+            print(f"✅ Downloaded from Google: {filename}")
+
+        # --- Microsoft Azure ---
+        elif use_mode_azr:
+            connection_string = os.getenv("azuresmartsearch3key1conn")
+            if not connection_string: raise Exception("Azure connection string missing")
+
+            from azure.storage.blob import BlobServiceClient
+            blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+            blob_client = blob_service_client.get_blob_client(container=bucket_name, blob=filename)
+
+            with open(full_local_path, "wb") as download_file:
+                download_file.write(blob_client.download_blob().readall())
+            print(f"✅ Downloaded from Azure: {filename}")
+
+    except Exception as e:
+        print(f"❌ Error in download: {e}")
+
 def get_s3_client():
     """Initializes AWS S3 client using environment variables."""
     global s3_client
@@ -528,8 +586,16 @@ def md5_of_file(path):
             hash_md5.update(chunk)
     return base64.b64encode(binascii.unhexlify(hash_md5.hexdigest())).decode("utf-8")
 
+def update_gcs_radio(self):
+    if self.sync0:
+        self.cloud_gemini_radio.setText(sync_cloud_str)
+        self.display_root.setStyleSheet("color: white; background-color: black;")
+    else:
+        self.cloud_gemini_radio.setText(non_sync_cloud_str)
+        self.display_root.setStyleSheet("color: red; background-color: black;")
 
 def check_sync(self, prefix=""):
+
     local_path = self.provider_info.get("CLIENT_PREFIX_TO_STRIP")
     bucket_name = self.provider_info.get("BUCKET_NAME")
 
@@ -599,6 +665,20 @@ def check_sync(self, prefix=""):
                 if filename in mismatched_files:
                     mismatched_files.remove(filename)  # הקו
     # --- שאלה אחת וביצוע מחיקה ---
+    files_to_download = [f for f in missing_locally if  f.startswith(".index/")]
+    if files_to_download:
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Warning)
+        msg.setWindowTitle("הורדה מהענן" if not isLTR else "Download Delete")
+        msg.setText(f"נמצאו {len(files_to_download)} קבצים להורדה מהענן. לבצע?" if not isLTR else f"Download {len(files_to_download)} files from cloud?")
+        msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+        if msg.exec_() == QMessageBox.Ok:
+            for filename in files_to_download:
+                download_from_cloud(self, local_path, filename)
+
+                if filename in missing_locally:
+                    missing_locally.remove(filename)  # הקובץ כבר לא חסר בענן
+
     files_to_delete = [f for f in missing_locally if not f.startswith(".index/")]
     if files_to_delete:
         msg = QMessageBox()
@@ -611,6 +691,17 @@ def check_sync(self, prefix=""):
                 delete_from_cloud_with_index(self,filename, prefix=prefix)
 
     sync_status = not missing_locally and not missing_in_cloud and not mismatched_files
+    sync0 = sync_status
+    self.sync0 = sync0
+
+    update_gcs_radio(self)
+    if self.sync0:
+        self.display_root.setStyleSheet("color: white; background-color: lightblue;")
+    else:
+        self.display_root.setStyleSheet("color: red; background-color: lightblue;")
+
+
+
     return {
         "missing_in_gcs": missing_in_cloud,
         "missing_locally": missing_locally,
@@ -914,6 +1005,8 @@ if __name__ == "__main__":
     # os.environ["amazon_key"] = "..."
     # os.environ["amazon_secret"] = "..."
     # os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "path_to_json"
+    BUCKET_NAME=PROVIDER_CONFIG.get("BUCKET_NAME")
+    cloud_files = get_gcs_files_recursive(BUCKET_NAME)
 
     app = QtWidgets.QApplication(sys.argv)
 
