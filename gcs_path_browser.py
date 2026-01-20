@@ -11,18 +11,13 @@ import binascii, base64
 from ui_setup import isLTR
 from PyQt5.QtWidgets import QMessageBox
 import boto3  # Make sure to pip install boto3
-import pdfplumber
-import io, re
-import fitz  # PyMuPDF
-import pytesseract
-from PIL import Image
-from docx import Document
+import json
+
 from ui_setup import non_sync_cloud_str, sync_cloud_str
 from azure.storage.blob import BlobServiceClient, ContentSettings
 import base64
 from config_reader import PROVIDER_CONFIG
-
-# Set your flag here based on your environment
+from document_parsers import extract_text_for_indexing # Set your flag here based on your environment
 
 
 
@@ -113,161 +108,106 @@ def get_azure_files_recursive(container_name, prefix):
 
     return cloud_files
 
-def delete_from_cloud_with_index(self,filename, prefix=""):
+
+def delete_from_cloud_with_index(self, filename, prefix="", skip_index_delete=True):
     """
-    מוחק מהענן (AWS או GCS) את הקובץ המקורי ואת האינדקס שלו
+    מוחק מהענן את הקובץ המקורי.
+    מוחק את האינדקס רק אם skip_index_delete=False.
     """
-    # 1. הגדרת הנתיבים (זהים לשני העננים)
     target_key = f"{prefix}/{filename}".replace("//", "/").strip("/")
     base_name = os.path.splitext(filename)[0]
     index_key = f".index/{prefix}/{base_name}.json".replace("//", "/").strip("/")
-    cloud_provider =self.provider_info.get("cloud_provider")
-    bucket_name = self.provider_info.get("BUCKET_NAME")
-    try:
-        if cloud_provider == "Amazon":
-            # --- מחיקה מ-AWS S3 ---
-            client = get_s3_client()
 
-            # מחיקה של שני האובייקטים בבת אחת (יעיל יותר)
+    cloud_provider = self.provider_info.get("cloud_provider")
+    bucket_name = self.provider_info.get("BUCKET_NAME")
+
+    try:
+        # --- Amazon AWS ---
+        if cloud_provider == "Amazon":
+            client = get_s3_client()
+            delete_list = [{'Key': target_key}]
+
+            # הוספת האינדקס לרשימת המחיקה רק אם לא ביקשנו לדלג
+            if not skip_index_delete:
+                delete_list.append({'Key': index_key})
+
             client.delete_objects(
                 Bucket=bucket_name,
-                Delete={
-                    'Objects': [
-                        {'Key': target_key},
-                        {'Key': index_key}
-                    ],
-                    'Quiet': True
-                }
+                Delete={'Objects': delete_list, 'Quiet': True}
             )
-            print(f"🗑️ AWS: Deleted {target_key} and its index.")
+            print(f"🗑️ AWS: Deleted {target_key} " + ("(Index skipped)" if skip_index_delete else "and its index."))
 
+        # --- Google Cloud ---
         elif cloud_provider == "Google":
-            # --- מחיקה מ-Google Cloud Storage ---
             global gcs_client
-            if gcs_client is None:
-                gcs_client = get_storage_client()
+            if gcs_client is None: gcs_client = get_storage_client()
             bucket = gcs_client.bucket(bucket_name)
 
-            # ב-GCS מוחקים כל אובייקט בנפרד
+            # מחיקת קובץ מקורי
             blob = bucket.blob(target_key)
-            if blob.exists():
-                blob.delete()
+            if blob.exists(): blob.delete()
 
-            index_blob = bucket.blob(index_key)
-            if index_blob.exists():
-                index_blob.delete()
+            # מחיקת אינדקס בתנאי
+            if not skip_index_delete:
+                index_blob = bucket.blob(index_key)
+                if index_blob.exists(): index_blob.delete()
 
-            print(f"🗑️ GCS: Deleted {target_key} and its index.")
+            print(f"🗑️ GCS: Deleted {target_key} " + ("(Index skipped)" if skip_index_delete else "and its index."))
+
+        # --- Microsoft Azure ---
         elif cloud_provider == "Microsoft":
-            # --- מחיקה מ-Microsoft Azure Blob Storage ---
-
+            from azure.storage.blob import BlobServiceClient
             connection_string = os.getenv("azuresmartsearch3key1conn")
             blob_service_client = BlobServiceClient.from_connection_string(connection_string)
             container_client = blob_service_client.get_container_client(bucket_name)
-            # מחיקה של הקובץ המקורי
+
+            # מחיקת קובץ מקורי
             blob_file = container_client.get_blob_client(target_key)
-            if blob_file.exists():
-                blob_file.delete_blob()
+            if blob_file.exists(): blob_file.delete_blob()
 
-            # מחיקה של האינדקס
-            blob_index = container_client.get_blob_client(index_key)
-            if blob_index.exists():
-                blob_index.delete_blob()
+            # מחיקת אינדקס בתנאי
+            if not skip_index_delete:
+                blob_index = container_client.get_blob_client(index_key)
+                if blob_index.exists(): blob_index.delete_blob()
 
-            print(f"🗑️ Azure: Deleted {target_key} and its index.")
+            print(f"🗑️ Azure: Deleted {target_key} " + ("(Index skipped)" if skip_index_delete else "and its index."))
 
-
+        return True
 
     except Exception as e:
         print(f"❌ Error during cloud deletion of {filename}: {e}")
         return False
 
 
-def extract_text_for_indexing(file_bytes, file_ext):
-    used_ocr = False
-    file_ext = file_ext.lower()
-    pages_data = []  # נשמור כאן רשימת אובייקטים של עמודים
+def save_json_file(self, local_folder, filename, base_folder):
+    # Create the exact same path structure in the cloud
+    relative_dir = os.path.relpath(local_folder, base_folder).replace("\\", "/")
 
-    try:
-        if file_ext == '.pdf':
-            pages_data = []
-            used_ocr = False
-            fitz_flag = False  # שנה ל-False כדי לבדוק את pdfplumber
+    base_name = os.path.splitext(filename)[0]
+    local_index_path = os.path.join(base_folder, ".index", relative_dir, f"{base_name}.json")
 
-            # פתרון לבעיית ה-with: נפתח את הקובץ לפי הפלאג
-            if fitz_flag:
-                doc_context = fitz.open(stream=file_bytes, filetype="pdf")
-                pages_iterator = doc_context
-            else:
-                doc_context = pdfplumber.open(io.BytesIO(file_bytes))
-                pages_iterator = doc_context.pages
+    os.makedirs(os.path.dirname(local_index_path), exist_ok=True)
 
-            with doc_context as doc:
-                for p_num_zero, page in enumerate(pages_iterator):
-                    p_num = p_num_zero + 1  # מספור עמודים אנושי (1, 2, 3...)
+    with open(os.path.join(local_folder, filename), "rb") as f:
+        pdf_bytes = f.read()
 
-                    # 1. חילוץ טקסט ראשוני
-                    if fitz_flag:
-                        current_text = page.get_text().strip()
-                    else:
-                        current_text = page.extract_text() or ""
+    file_ext = os.path.splitext(filename)[1].lower()
+    pages_data, was_ocr_needed = extract_text_for_indexing(pdf_bytes, file_ext)
 
-                    # 2. בדיקה אם צריך OCR
-                    if len(current_text.strip()) < 100:
-                        print(f"Page {p_num}: Running OCR...")
-                        used_ocr = True
+    index_data = {
+        "filename": filename,
+        "pages": pages_data,
+        "timestamp": time.time()
+    }
 
-                        if fitz_flag:
-                            # שימוש ב-Fitz לרנדור תמונה
-                            pix = page.get_pixmap(matrix=fitz.Matrix(3, 3))
-                            img = Image.open(io.BytesIO(pix.tobytes("png"))).convert('L')
-                        else:
-                            # שימוש ב-pdfplumber לרנדור תמונה
-                            img = page.to_image(resolution=220).original
-                            img = img.convert('L')
-
-                        # הרצת ה-OCR
-                        lang = 'eng' if isLTR else 'heb'
-                        page_text = pytesseract.image_to_string(img, lang=lang)
-                    else:
-                        # אם הטקסט חולץ בהצלחה ללא OCR
-                        page_text = current_text
-
-                    # 3. שמירת הנתונים ל-JSON
-                    if page_text.strip():
-                        lines = [l.strip() for l in page_text.split('\n') if l.strip()]
-                        pages_data.append({"page": p_num, "lines": lines})
+    # יצירת ה-JSON כ-Bytes (למניעת בעיות Encoding/Newline בווינדוס)
+    json_payload = json.dumps(index_data, ensure_ascii=False, indent=4).encode('utf-8')
 
 
-        elif file_ext == '.docx':
-            doc = Document(io.BytesIO(file_bytes))
-            # ב-DOCX נתייחס להכל כעמוד 1 או נחלק לפי פסקאות
-            text_lines = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
-            if text_lines:
-                pages_data.append({"page": 1, "lines": text_lines})
+    # שמירה כבינארי (wb)
+    with open(local_index_path, "wb") as f:
+        f.write(json_payload)
 
-            # OCR לתמונות בתוך ה-DOCX
-            current_page = 2
-            for rel in doc.part.rels.values():
-                if "image" in rel.target_ref:
-                    try:
-                        img = Image.open(io.BytesIO(rel.target_part.blob))
-                        ocr_text = pytesseract.image_to_string(img.convert('L'), lang='heb+eng')
-                        if ocr_text.strip():
-                            pages_data.append({
-                                "page": current_page,
-                                "lines": [l.strip() for l in ocr_text.split('\n') if l.strip()]
-                            })
-                            current_page += 1
-                            used_ocr = True
-                    except:
-                        continue
-
-    except Exception as e:
-        print(f"ERROR in extraction: {e}")
-        return [], False
-
-    return pages_data, used_ocr
 
 
 def upload_to_cloud(self, local_folder, filename, base_folder):
@@ -286,6 +226,10 @@ def upload_to_cloud(self, local_folder, filename, base_folder):
     relative_dir = os.path.relpath(local_folder, base_folder).replace("\\", "/")
     if relative_dir == ".": relative_dir = ""
     relative_file_path = f"{relative_dir}/{filename}".replace("//", "/").strip("/")
+
+    base_name = os.path.splitext(filename)[0]
+    local_index_path = os.path.join(base_folder, ".index", relative_dir, f"{base_name}.json")
+    os.makedirs(os.path.dirname(local_index_path), exist_ok=True)
 
     try:
         if not os.path.exists(file_path):
@@ -594,6 +538,64 @@ def update_gcs_radio(self):
         self.cloud_gemini_radio.setText(non_sync_cloud_str)
         self.display_root.setStyleSheet("color: red; background-color: black;")
 
+
+import docx
+import pdfplumber
+
+
+def analyze_file_ocr_needs(self, full_path):
+    ext = full_path.lower().split('.')[-1]
+
+    # --- טיפול ב-PDF ---
+    if ext == 'pdf':
+        try:
+            with pdfplumber.open(full_path) as pdf:
+                total_pages = len(pdf.pages)
+                scanned_pages = 0
+                for page in pdf.pages:
+                    # אם אין טקסט בכלל בדף, נחשיב אותו כסרוק
+                    if not page.extract_text(layout=False).strip():
+                        scanned_pages += 1
+
+                if scanned_pages == total_pages: return "full_ocr"
+                if scanned_pages > 0: return "partial_ocr"
+                return "none"
+        except:
+            return "full_ocr"
+
+    # --- טיפול ב-DOCX ---
+    if ext == 'docx':
+        try:
+            doc = docx.Document(full_path)
+            # בודקים אם יש טקסט בכלל במסמך
+            full_text = "".join([p.text for p in doc.paragraphs]).strip()
+
+            # חיפוש אלמנטים גרפיים (תמונות/סריקות)
+            has_images = False
+            # בדיקה בתוך פסקאות
+            for paragraph in doc.paragraphs:
+                if 'w:drawing' in paragraph._p.xml or 'w:pict' in paragraph._p.xml:
+                    has_images = True
+                    break
+
+            # בדיקה בתוך טבלאות
+            if not has_images:
+                for table in doc.tables:
+                    for row in table.rows:
+                        for cell in row.cells:
+                            if 'w:drawing' in cell._element.xml:
+                                has_images = True
+                                break
+
+            if not full_text and has_images: return "full_ocr"  # מסמך ריק עם תמונה (כנראה סריקה)
+            if full_text and has_images: return "partial_ocr"  # יש טקסט אבל יש גם תמונות/סריקות
+            if not full_text and not has_images: return "none"  # מסמך ריק לגמרי
+            return "none"
+        except:
+            return "partial_ocr"
+
+    return "none"
+
 def check_sync(self, prefix=""):
 
     local_path = self.provider_info.get("CLIENT_PREFIX_TO_STRIP")
@@ -646,6 +648,12 @@ def check_sync(self, prefix=""):
             if is_mismatched:
                 mismatched_files.append(filename)
 
+    if files_to_upload:
+        for filename in files_to_upload:
+            if not filename.lower().endswith('.json'):
+                is_ocr_needed = analyze_file_ocr_needs(self, filename)
+                if is_ocr_needed in {"full_ocr", "partial_ocr"}:
+                    save_json_file(self,local_path, filename, base_folder=self.provider_info["CLIENT_PREFIX_TO_STRIP"])
 
     # --- שאלה אחת וביצוע העלאה ---
     if files_to_upload:
@@ -688,7 +696,9 @@ def check_sync(self, prefix=""):
         msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
         if msg.exec_() == QMessageBox.Ok:
             for filename in files_to_delete:
-                delete_from_cloud_with_index(self,filename, prefix=prefix)
+                delete_from_cloud_with_index(self,filename, prefix=prefix, skip_index_delete = False)
+                if filename in missing_locally:
+                    missing_locally.remove(filename)  # הקובץ כבר לא חסר בענן
 
     sync_status = not missing_locally and not missing_in_cloud and not mismatched_files
     sync0 = sync_status

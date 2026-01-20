@@ -8,9 +8,9 @@ from docx import Document  # כבר נמצא ב-requirements שלך
 import pytesseract
 from amazon_search_utilities import match_line, highlight_matches_html, search_in_json_content
 from PIL import Image
-import shutil
 import json
 import config_reader
+from document_parsers import extract_text_for_indexing
 
 cloud_provider="Amazon"
 PROVIDER_CONFIG=config_reader.set_provider_config(cloud_provider)
@@ -18,15 +18,6 @@ PROVIDER_CONFIG=config_reader.set_provider_config(cloud_provider)
 BUCKET_NAME = PROVIDER_CONFIG["BUCKET_NAME"]
 
 
-
-
-# בדיקה והגדרה של נתיב Tesseract
-tesseract_bin = shutil.which("tesseract")
-if tesseract_bin:
-    pytesseract.pytesseract.tesseract_cmd = tesseract_bin
-else:
-    # ברירת מחדל בלינוקס אם shutil לא מצא
-    pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract'
 
 
 
@@ -70,24 +61,106 @@ def get_documents_for_path(directory_path):
                             pages.append(p)
 
 
+
                 except s3.exceptions.NoSuchKey:
+
+                    file_obj = s3.get_object(Bucket=BUCKET_NAME, Key=key)
+
+                    file_content = file_obj['Body'].read()
+
+                    file_ext = filename.lower()
+
+                    pages = []  # אתחול תמיד
 
                     print(f"🔍 Index missing for {filename}. Extracting real content...")
 
-                    file_obj = s3.get_object(Bucket=BUCKET_NAME, Key=key)
-                    file_content = file_obj['Body'].read()
-                    extracted_text = ""
+                    if file_ext.endswith('.docx'):
 
-                    if filename.lower().endswith('.docx'):
                         doc_reader = Document(io.BytesIO(file_content))
-                        extracted_text = "\n".join([para.text for para in doc_reader.paragraphs])
-                    elif filename.lower().endswith('.pdf'):
-                        with fitz.open(stream=file_content, filetype="pdf") as pdf:
-                            extracted_text = "\n".join([page.get_text() for page in pdf])
-                    else:
-                        extracted_text = file_content.decode('utf-8', errors='ignore')
 
-                    pages = [{"page_number": 1, "lines": extracted_text.splitlines()}]
+                        extracted_text = "\n".join([para.text for para in doc_reader.paragraphs])
+
+                        pages = [{"page_number": 1, "lines": extracted_text.splitlines()}]
+
+
+                    elif file_ext.endswith('.pdf'):
+
+                        with fitz.open(stream=file_content, filetype="pdf") as pdf:
+
+                            num_pages = len(pdf)
+
+                            # חילוץ טקסט דיגיטלי ראשוני
+
+                            full_digital_text = "\n".join([p.get_text() for p in pdf])
+
+                        # בדיקת סף OCR
+
+                        avg_chars = len(full_digital_text) / max(num_pages, 1)
+
+                        if avg_chars < 200:
+
+                            print(f"🚀 OCR triggered (Avg chars: {avg_chars:.1f})")
+
+                            raw_pages, was_ocr = extract_text_for_indexing(file_content, '.pdf', isLTR=None)
+                            pages = [{"page_number": p["page"], "lines": p["lines"]} for p in raw_pages]
+
+                            index_data = {
+                                "filename": filename,
+                                "pages": raw_pages,
+                                "timestamp": time.time()
+                            }
+                            base_name = os.path.splitext(filename)[0]
+                            clean_prefix = base_prefix.strip("/")
+                            local_index_path = os.path.join(".index", clean_prefix, f"{base_name}.json")
+
+                            try:
+                                target_dir = os.path.dirname(local_index_path)
+                                if not os.path.exists(target_dir):
+                                    print(f"📂 DEBUG: Creating missing directory: {target_dir}")
+                                    os.makedirs(target_dir, exist_ok=True)
+
+                                json_payload = json.dumps(index_data, ensure_ascii=False, indent=4).encode('utf-8')
+
+                                s3.put_object(
+                                    Bucket=BUCKET_NAME,
+                                    Key=index_key,  # הנתיב שמתחיל ב-.index/
+                                    Body=json_payload,
+                                    ContentType='application/json'
+                                )
+
+
+
+                            except Exception as save_error:
+                                print(f"🔥 DEBUG: Failed to write local index: {save_error}")
+
+
+                        else:
+
+                            with fitz.open(stream=file_content, filetype="pdf") as pdf:
+
+                                for i, page in enumerate(pdf):
+                                    # כאן page.get_text() הוא string, אז splitlines עובד
+
+                                    pages.append({
+
+                                        "page_number": i + 1,
+
+                                        "lines": page.get_text().splitlines()
+
+                                    })
+
+
+                    else:
+
+                        try:
+
+                            extracted_text = file_content.decode('utf-8')
+
+                        except:
+
+                            extracted_text = file_content.decode('cp1255', errors='ignore')
+
+                        pages = [{"page_number": 1, "lines": extracted_text.splitlines()}]
 
                 except Exception as e:
                     print(f"⚠️ Error parsing index for {filename}: {e}")
@@ -189,8 +262,17 @@ if __name__ == "__main__":
     else:
         #test_docx_parsing("C:\\a\\b.docx")
         file_path = "C:\\a\\b.docx"
+        filename = "C:\\a\\b.pdf"
         with open(file_path, 'rb') as f:
             file_bytes = f.read()
+
+        with open(filename, "rb") as f:
+            pdf_bytes = f.read()
+
+        file_ext = os.path.splitext(filename)[1].lower()
+        pages_data, was_ocr_needed = extract_text_for_indexing(pdf_bytes, file_ext)
+
+
         doc_obj = Document(io.BytesIO(file_bytes))
         all_lines = []
         # יצירת רשימת עמודים אמיתית יותר ל-GUI

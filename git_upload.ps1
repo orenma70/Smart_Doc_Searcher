@@ -5,11 +5,11 @@
 git status
 
 
-$ver = "v27.4.0"
-$comment = "update gcs_path_browser"
+$ver = "v27.6.0"
+$comment = "aws - amazon support ocr + json generation"
 
 # 2. בקשת אישור מהמשתמש
-Write-Host "-------------- $ver --------------" -ForegroundColor Cyan
+Write-Host "-------- $ver - $comment --------" -ForegroundColor Cyan
 $confirmation = Read-Host "Keep on commit and push to +++ $ver +++  ? (y/n)"
 if ($confirmation -ne 'y') {
     Write-Host "Operation cancelled by user." -ForegroundColor Yellow

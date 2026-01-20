@@ -1,17 +1,30 @@
 
 import io
 import re
-import os
+import os, time
 import traceback
 from pypdf import PdfReader
 from pdfminer.high_level import extract_text_to_fp
 import fitz  # PyMuPDF
 from docx import Document
-#   from PyPDF2 import PdfReader
 import pypdf
-from PIL import Image # Used to handle the image object
 import json
+from PIL import Image
 
+import gc, concurrent.futures  # חלופה מודרנית ונוחה ל-Pool
+import pytesseract, shutil
+
+# 1. הגדרת Tesseract לעבודה בליבה אחת בלבד - חייב להתבצע לפני הטעינה
+os.environ['OMP_THREAD_LIMIT'] = '1'
+
+tesseract_bin = shutil.which("tesseract")
+if tesseract_bin:
+    pytesseract.pytesseract.tesseract_cmd = tesseract_bin
+else:
+    if os.name == 'nt': # Windows
+        pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+    else: # Linux/Cloud
+        pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract'
 
 def find_paragraph_position_in_pages(paragraph_text: str, pages):
     """
@@ -466,6 +479,129 @@ def get_json_index_path(pdf_path, base_folder=""):
 
     return os.path.normpath(json_path)
 
+
+def detect_language_robust(doc, pages_data, isLTR_flag):
+    # 1. אם ה-GUI שלח דגל (True/False), נשתמש בו וזהו
+    if isLTR_flag is not None:
+        return 'eng' if isLTR_flag else 'heb'
+
+    # 2. נבדוק כמה טקסט חולץ באופן טבעי
+    total_text = "".join(["".join(p["lines"]) for p in pages_data])
+
+    # אם חולץ המון טקסט (מעל 500 תווים), כנראה אפשר לסמוך על הסטטיסטיקה שלו
+    if len(total_text) > 500:
+        hebrew_chars = len([c for c in total_text if '\u0590' <= c <= '\u05ff'])
+        english_chars = len([c for c in total_text if 'a' <= c.lower() <= 'z'])
+        return 'eng' if english_chars > hebrew_chars else 'heb'
+
+    # 3. אם אין מספיק טקסט אמין (מסמך סרוק), נבצע דגימת OCR מהירה על דף 1
+    try:
+        page = doc[0]  # דף ראשון
+        # רנדור קטן ומהיר (Matrix 1.0 מספיק לזיהוי שפה)
+        pix = page.get_pixmap(matrix=fitz.Matrix(1, 1))
+        img = Image.open(io.BytesIO(pix.tobytes("ppm")))
+
+        # מריצים על heb+eng רק לצורך הזיהוי הראשוני
+        sample_text = pytesseract.image_to_string(img, lang='heb+eng', config='--psm 3 --oem 3')
+
+        heb_count = len([c for c in sample_text if '\u0590' <= c <= '\u05ff'])
+        eng_count = len([c for c in sample_text if 'a' <= c.lower() <= 'z'])
+
+        return 'eng' if eng_count > heb_count else 'heb'
+    except:
+        return 'heb'  # ברירת מחדל בטוחה לישראל
+
+
+def ocr_worker(img_data, p_num, lang):
+    """פונקציה עצמאית שתרוץ על כל ליבה בנפרד"""
+    try:
+        # שימוש ב-bytes() מבטיח ניתוק מהזיכרון של fitz למניעת BufferError ב-PC
+        with Image.open(io.BytesIO(bytes(img_data))) as img:
+            img_gray = img.convert('L')
+            config = '--oem 3 --psm 6'
+            text = pytesseract.image_to_string(img_gray, lang=lang, config=config)
+
+            if text.strip():
+                lines = [l.strip() for l in text.split('\n') if l.strip()]
+                return {"page": p_num, "lines": lines}
+    except Exception as e:
+        print(f"Error in worker on page {p_num}: {e}")
+    return None
+
+
+def extract_text_for_indexing(file_bytes, file_ext, isLTR=None):
+    used_ocr = False
+    pages_data = []
+    time0 = time.time()
+    print(f"🚀🚀🚀🚀🚀extract_text_for_indexing")
+    # הגבלה קשיחה - 2 תהליכים בו-זמנית
+    MAX_WORKERS = 2
+
+    try:
+        if file_ext.lower() == '.pdf':
+            doc = fitz.open(stream=file_bytes, filetype="pdf")
+            ocr_tasks = []
+
+            for p_num_zero, page in enumerate(doc):
+                p_num = p_num_zero + 1
+                current_text = page.get_text().strip()
+
+                if len(current_text) < 100:
+                    used_ocr = True
+                    pix = page.get_pixmap(matrix=fitz.Matrix(3, 3))
+                    img_data = bytes(pix.tobytes("png"))
+
+                    #img_data = bytes(pix.tobytes("ppm"))
+                    ocr_tasks.append((img_data, p_num))
+                    pix = None
+                else:
+                    lines = [l.strip() for l in current_text.split('\n') if l.strip()]
+                    pages_data.append({"page": p_num, "lines": lines})
+
+            if isLTR is None:
+                detected_lang = detect_language_robust(doc, pages_data, None)
+                print(f"🌍 Cloud Mode: Auto-detected language: {detected_lang}")
+            else:
+                detected_lang = 'eng' if isLTR else 'heb'
+
+            doc.close()
+            if ocr_tasks:
+                print(f"🚀 Safe Parallel OCR: {len(ocr_tasks)} pages with {MAX_WORKERS} workers")
+                with concurrent.futures.ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                    # מעבירים גם את isLTR לכל worker
+                    futures = [executor.submit(ocr_worker, task[0], task[1], detected_lang) for task in ocr_tasks]
+
+                    for future in concurrent.futures.as_completed(futures):
+                        result = future.result()
+                        if result:
+                            pages_data.append(result)
+
+
+            pages_data.sort(key=lambda x: x["page"])
+
+    except Exception as e:
+        print(f"ERROR in extraction: {e}")
+        return [], False
+    finally:
+        # ניקוי בטוח שמתאים גם לענן וגם ל-PC
+        if 'ocr_tasks' in locals():
+            del ocr_tasks
+
+        try:
+            # ה-GC יצליח ב-99% מהמקרים אם ה-ocr_tasks נמחק וה-doc נסגר
+            gc.collect()
+        except BufferError:
+            # אם ב-Windows עדיין יש נעילה, פשוט מתעלמים.
+            # הזיכרון ישתחרר כשהפונקציה תסתיים (Return)
+            pass
+
+        except:
+            pass
+
+        # עכשיו זה בטוח - אין אובייקטים שנועלים את הזיכרון
+        gc.collect()
+    print(f"OCR time = {time.time() - time0:.2f}s")
+    return pages_data, used_ocr
 
 # --- שימוש בתוך הפונקציה שלך ---
 def get_json_index_if_exists(self,pdf_path):
