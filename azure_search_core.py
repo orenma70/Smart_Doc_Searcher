@@ -1,12 +1,19 @@
-import os, time, traceback, re
+import os, time, traceback, json
 from flask import Flask, request, jsonify
 from azure.storage.blob import BlobServiceClient
 from azure_search_utilities import azure_provider, search_in_json_content, highlight_matches_html, match_line
 import base64
 import urllib.parse  # חובה להוסיף בראש הקובץ
-from openai import AzureOpenAI
+#from openai import AzureOpenAI
 import requests
+import fitz
+import config_reader
+from document_parsers import extract_text_for_indexing
 
+cloud_provider="Microsoft"
+PROVIDER_CONFIG=config_reader.set_provider_config(cloud_provider)
+
+CONTAINER_NAME = PROVIDER_CONFIG["BUCKET_NAME"]
 
 
 # בתוך ה-Endpoint, וודא שאתה משתמש בזה:
@@ -54,6 +61,217 @@ def decode_azure_path(encoded_path):
         print(f"⚠️ Decode failed: {e}")
         return urllib.parse.unquote(encoded_path)
 
+
+def get_documents_for_path_azure(directory_path):
+    documents = []
+    # השתמשנו במשתנה הגלובלי שהגדרת למעלה
+    container_name = CONTAINER_NAME
+    container_name = CONTAINER_NAME.strip()  # ניקוי רווחים מיותרים
+    print(f"DEBUG: Using Container Name: '{container_name}'")
+
+    try:
+        container_client = blob_service_client.get_container_client(container_name)
+        print(f"DEBUG2")
+        base_prefix = directory_path.strip('/') + '/' if directory_path else ""
+        blobs = container_client.list_blobs(name_starts_with=base_prefix)
+
+        for blob in blobs:
+            print(f"DEBUG3")
+            key = blob.name
+            filename = key.split('/')[-1]
+
+            if key.endswith('/') or filename.startswith('~$') or key.startswith('.index/'):
+                continue
+
+            base_path = key.rsplit('.', 1)[0] if '.' in key else key
+            index_key = f".index/{base_path}.json"
+
+            pages = []
+            blob_client_index = container_client.get_blob_client(index_key)
+
+            try:
+                # 1. ניסיון טעינה מה-JSON הקיים (ה-Sidecar)
+                index_content = blob_client_index.download_blob().readall()
+                index_data = json.loads(index_content.decode('utf-8'))
+                raw_pages = index_data.get("pages", [])
+
+                # נירמול המבנה כדי ש-search_in_json_content לא יקרוס
+                for idx, p in enumerate(raw_pages):
+                    if isinstance(p, str):
+                        pages.append({"page_number": idx + 1, "lines": [p]})
+                    else:
+                        # וידוא שקיים מפתח page_number
+                        p_num = p.get("page_number") or p.get("page") or (idx + 1)
+                        pages.append({"page_number": p_num, "lines": p.get("lines", [])})
+
+            except Exception:
+                # 2. אם האינדקס חסר - חילוץ/OCR
+                print(f"🔍 Index missing for {filename}. Downloading original...")
+                blob_client_file = container_client.get_blob_client(key)
+                file_content = blob_client_file.download_blob().readall()
+                file_ext = filename.lower()
+
+                if file_ext.endswith('.pdf'):
+                    with fitz.open(stream=file_content, filetype="pdf") as pdf:
+                        num_pages = len(pdf)
+                        full_digital_text = "\n".join([p.get_text() for p in pdf])
+
+                    avg_chars = len(full_digital_text) / max(num_pages, 1)
+
+                    if avg_chars < 200:
+                        print(f"🚀 Triggering OCR for {filename} (Scanned Doc detected)")
+                        # קריאה לפונקציית ה-OCR שלך
+                        raw_pages, _ = extract_text_for_indexing(file_content, '.pdf')
+                        pages = [{"page_number": p.get("page", i + 1), "lines": p.get("lines", [])} for i, p in
+                                 enumerate(raw_pages)]
+
+                        # שמירת האינדקס ל-Azure כדי שלא נריץ OCR שוב לעולם
+                        index_save_data = {"filename": filename, "pages": pages, "timestamp": time.time()}
+                        blob_client_index.upload_blob(
+                            json.dumps(index_save_data, ensure_ascii=False, indent=4).encode('utf-8'),
+                            overwrite=True
+                        )
+                    else:
+                        # חילוץ דיגיטלי מהיר
+                        with fitz.open(stream=file_content, filetype="pdf") as pdf:
+                            for i, page in enumerate(pdf):
+                                pages.append({"page_number": i + 1, "lines": page.get_text().splitlines()})
+
+                # כאן אפשר להוסיף טיפול ב-DOCX במידת הצורך
+
+            documents.append({
+                "name": filename,
+                "full_path": key,
+                "pages": pages
+            })
+
+        return documents
+    except Exception as e:
+        print(f"🔥 Azure Blob Error: {str(e)}")
+        traceback.print_exc()
+        return []
+
+def azure_simple_keyword_search(query, directory_path="", mode="any", match_type="partial", show_mode="paragraph"):
+    # 1. שליפת המסמכים מ-Azure Blob Storage (כולל ה-OCR והאינדוקס)
+    # זו הפונקציה שבנינו שבודקת את תיקיית .index בתוך ה-Blob
+    documents = get_documents_for_path_azure(directory_path)
+
+    if not documents:
+        print(f"⚠️ No documents found in Azure path: {directory_path}")
+        return {"status": "ok", "details": "No documents found", "matches": []}
+
+    words = [w.strip() for w in query.split() if w.strip()]
+    results = []
+
+    print(f"🔍 Searching for '{query}' across {len(documents)} documents...")
+
+    for doc in documents:
+        # בדיקה שהמסמך מכיל דפים/טקסט
+        doc_pages = doc.get("pages", [])
+        if not doc_pages:
+            continue
+
+        if show_mode == "paragraph":
+            # שימוש בפונקציית העזר הקיימת שלך לחיפוש בפסקאות
+            matches_html = search_in_json_content(
+                doc["full_path"], doc_pages, words, mode, match_type
+            )
+            if matches_html:
+                results.append({
+                    "file": doc["name"],
+                    "full_path": doc["full_path"],
+                    "matches_html": matches_html,
+                    "match_positions": []
+                })
+        else:  # Line Mode (מצב שורות עם מספרי עמודים)
+            matched_items_html = []
+            for page_entry in doc_pages:
+                # שים לב: ב-OCR המפתח הוא לעיתים "page_number" ובדיגיטלי "page"
+                p_num = page_entry.get("page") or page_entry.get("page_number") or 1
+
+                for line in page_entry.get("lines", []):
+                    if match_line(line, words, mode, match_type):
+                        highlighted = highlight_matches_html(line, words, match_type)
+                        matched_items_html.append(f"עמוד {p_num}: {highlighted}")
+
+            if matched_items_html:
+                results.append({
+                    "file": doc["name"],
+                    "full_path": doc["full_path"],
+                    "matches_html": matched_items_html
+                })
+
+    return {
+        "status": "ok",
+        "query": query,
+        "matches": results,
+        "count": len(results)
+    }
+
+
+@app.route('/simple_search', methods=['POST'])
+def azure_simple_search_endpoint():
+    timer_start = time.time()
+
+    # 1. הגנה מפני קלט ריק או לא תקין
+    data = request.get_json(silent=True)
+    if not data:
+        print("⚠️ DEBUG: No JSON data received in request")
+        return jsonify({"error": "Missing JSON body"}), 400
+
+    query = data.get('query', '').strip()
+    directory_path = data.get('directory_path', '').strip()
+
+    # 2. שליפת הגדרות עם וידוא טיפוסים (Types)
+    config = data.get("search_config", {})
+    if not isinstance(config, dict): config = {}
+
+    word_logic = config.get("word_logic", "any")
+    match_type = config.get("match_type", "partial")
+    show_mode = config.get("show_mode", "paragraph")
+
+    print(f"--- 🚀 Azure Search Start ---")
+    print(f"🔍 Query: '{query}' | Path: '{directory_path}'")
+    print(f"⚙️ Config: Logic={word_logic}, Match={match_type}, Show={show_mode}")
+
+    if not query:
+        return jsonify({"status": "ok", "matches": [], "count": 0, "details": "Empty query"}), 200
+
+    try:
+        # 3. קריאה למנוע החיפוש (הפונקציה שמשלבת OCR ו-Blob)
+        # וודא שהפונקציה הזו מוגדרת לפני ה-Endpoint בקוד
+        result = azure_simple_keyword_search(
+            query,
+            directory_path,
+            mode=word_logic,
+            match_type=match_type,
+            show_mode=show_mode
+        )
+
+        # 4. חישוב זמן ביצוע והוספת נתוני אבחון
+        execution_time = round(time.time() - timer_start, 2)
+        result["debug"] = {
+            "execution_time_sec": execution_time,
+            "container": "Azure Container Apps",
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+        }
+
+        print(f"✅ Search completed: {len(result.get('matches', []))} matches in {execution_time}s")
+        return jsonify(result), 200
+
+    except Exception as e:
+        # 5. פירוט שגיאה מלא לטרמינל (Log Stream) ב-Azure
+        error_msg = str(e)
+        print(f"🔥 CRITICAL ERROR in /simple_search: {error_msg}")
+        traceback.print_exc()
+
+        # החזרת שגיאה מפורטת ללקוח (רק בזמן פיתוח)
+        return jsonify({
+            "status": "error",
+            "error": "Internal Server Error",
+            "message": error_msg,
+            "trace": traceback.format_exc().splitlines()[-3:]  # מחזיר רק את השורות האחרונות של השגיאה
+        }), 500
 
 def perform_azure_ai_search(query):
     try:
@@ -105,94 +323,6 @@ def search_endpoint():
         print(f"--- 🚀 New AI end ---")
         return jsonify({"answer": answer, "status": "Success"}), 200
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/simple_search', methods=['POST'])
-def azure_search_endpoint():
-    data = request.get_json(silent=True) or {}
-    query = data.get('query', '').strip()
-    directory_path = data.get('directory_path', '').strip()
-    mode = data.get('mode', 'any')
-    match_type = data.get('search_mode', 'partial')
-    show_mode = data.get('show_mode', 'paragraph')
-
-    print(f"--- 🚀 New Search Request ---")
-    print(f"🔍 Query: '{query}'")
-
-    if not query:
-        return jsonify({"results": [], "count": 0}), 200
-
-    words = [w.strip() for w in query.split() if w.strip()]
-    results = []
-
-    try:
-        # שימוש ב-provider הקיים שלך בדיוק כפי שביקשת
-        client = azure_provider.get_search_client()
-
-        if client is None:
-            return jsonify({"error": "Search client could not be initialized. Check environment variables."}), 500
-
-        print(f"📡 Calling Azure AI Search for: '{query}'...")
-
-        # ביצוע החיפוש ב-Azure
-        azure_docs = client.search(
-            search_text=query,
-            search_mode="all" if mode == "all" else "any",
-            # מוודאים ששולפים את השדות הנכונים מהאינדקס
-            select=["content", "metadata_storage_path", "metadata_storage_name"],
-            top=100
-        )
-
-        doc_count = 0
-        for res in azure_docs:
-            encoded_path = res.get("metadata_storage_path") or ""
-            # כאן הפונקציה decode_azure_path צריכה להיות מוגדרת אצלך בקוד
-            full_path = decode_azure_path(encoded_path) if 'decode_azure_path' in globals() else encoded_path
-            file_name = res.get("metadata_storage_name") or "Unknown"
-
-            # סינון תיקייה ידני
-            if directory_path and directory_path != "/":
-                clean_dir = directory_path.strip('/')
-                if clean_dir not in full_path:
-                    continue
-
-            doc_count += 1
-            raw_text = res.get("content") or ""
-            if not raw_text:
-                continue
-
-            # עיבוד הטקסט לשורות
-            lines = [ln.strip() for ln in raw_text.split('\n') if ln.strip()]
-
-            # לוגיקת החיפוש וההדגשה שלך (ללא שינוי)
-            if show_mode == "paragraph":
-                matches_html = search_in_json_content(
-                    full_path, [{"page": 1, "lines": lines}], words, mode, match_type
-                )
-                if matches_html:
-                    results.append({
-                        "file": file_name,
-                        "full_path": full_path,
-                        "matches_html": matches_html
-                    })
-            else:
-                matched_items_html = []
-                for line in lines:
-                    if match_line(line, words, mode, match_type):
-                        matched_items_html.append(highlight_matches_html(line, words, match_type))
-
-                if matched_items_html:
-                    results.append({
-                        "file": file_name,
-                        "full_path": full_path,
-                        "matches_html": matched_items_html
-                    })
-
-        return jsonify({"status": "ok", "query": query, "matches": results, "count": len(results)})
-
-    except Exception as e:
-        print(f"❌ ERROR: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/version')

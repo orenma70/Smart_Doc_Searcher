@@ -5,8 +5,8 @@
 git status
 
 
-$ver = "v27.6.0"
-$comment = "aws - amazon support ocr + json generation"
+$ver = "v27.7.0"
+$comment = "aws - azure support ocr + json generation"
 
 # 2. בקשת אישור מהמשתמש
 Write-Host "-------- $ver - $comment --------" -ForegroundColor Cyan
