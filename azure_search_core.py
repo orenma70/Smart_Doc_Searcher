@@ -273,57 +273,72 @@ def azure_simple_search_endpoint():
             "trace": traceback.format_exc().splitlines()[-3:]  # מחזיר רק את השורות האחרונות של השגיאה
         }), 500
 
-def perform_azure_ai_search(query):
+
+import requests
+import json
+
+def perform_azure_ai_search(query, directory_path):
     try:
-        # 1. חיפוש באינדקס (משתמש במפתח החיפוש הייעודי)
-        search_key = os.getenv("azure-key-search")
-        search_url = "https://smart-search-service3.search.windows.net/indexes/azureblob-index2/docs/search?api-version=2023-11-01"
+        # 1. איסוף הטקסט מה-OCR המקומי (כמו באמזון)
+        print(f"--- perform_azure_ai_search ---")
+        documents = get_documents_for_path_azure(directory_path)
+        all_context = ""
+        for doc in documents:
+            all_context += f"\n--- File: {doc['name']} ---\n"
+            for page in doc.get("pages", []):
+                all_context += "\n".join(page.get("lines", [])) + "\n"
 
-        print(f"LOG: 1. Searching Index...")
-        r = requests.post(search_url,
-                          json={"search": query, "top": 3},
-                          headers={"api-key": search_key, "Content-Type": "application/json"})
-        r.raise_for_status()
-        context = "\n".join([f"Content: {d['content']}" for d in r.json().get('value', [])])
+        # הגבלת אורך כדי לא לחרוג מה-API
+        all_context = all_context[:100000]
 
-        # 2. פנייה ל-OpenAI (כאן התיקון הקריטי!)
-        # אנחנו מוותרים על ה-Connection String ומשתמשים במפתח ה-AI שקיים לך
-        openai_key = os.getenv("AZURE_OPENAI_KEY")
+        # 2. הגדרות ה-API (שימוש ב-URL ישיר)
+        api_key = os.getenv("AZURE_OPENAI_KEY")
+        # וודא שהשם gpt-4.1 הוא אכן שם ה-Deployment שלך בפורטל
+        endpoint = "https://smartsearch3-openai.openai.azure.com/openai/deployments/gpt-4.1/chat/completions?api-version=2024-02-01"
 
+        headers = {
+            "Content-Type": "application/json",
+            "api-key": api_key
+        }
 
-        print(f"LOG: 2. Initializing AI with AZURE_OPENAI_KEY (starts with {openai_key[:4] if openai_key else 'None'})")
+        payload = {
+            "messages": [
+                {"role": "system", "content": "אתה עוזר משפטי. ענה על השאלה על בסיס הטקסט המצורף."},
+                {"role": "user", "content": f"Context: {all_context}\n\nQuestion: {query}"}
+            ],
+            "temperature": 0
+        }
 
-        ai_client = AzureOpenAI(
-            api_key=openai_key,
-            azure_endpoint="https://smartsearch3-openai.openai.azure.com",
-            api_version="2024-02-01"
-        )
+        # 3. שליחה באמצעות requests (בלי צורך ב-from openai import...)
+        print(f"LOG: Sending request to Azure OpenAI via HTTP...")
+        response = requests.post(endpoint, headers=headers, json=payload)
+        response.raise_for_status()  # זורק שגיאה אם ה-API מחזיר קוד שגיאה
 
-        print(f"LOG: 3. Sending to GPT...")
-        response = ai_client.chat.completions.create(
-            model="gpt-4.1",
-            messages=[{"role": "user", "content": f"Context: {context}\nQuestion: {query}"}]
-        )
-
-        return response.choices[0].message.content
+        result = response.json()
+        return result['choices'][0]['message']['content']
 
     except Exception as e:
-        print(f"❌ AI Error: {str(e)}")
-        return f"AI Error: {str(e)}"
+        import traceback
+        print(f"❌ HTTP AI Error: {traceback.format_exc()}")
+        return f"AI Error (HTTP Mode): {str(e)}"
+
+
 
 @app.route('/search', methods=['POST'])
 def search_endpoint():
-
     data = request.get_json(silent=True)
     query = data.get('query', '').strip()
+    directory_path = data.get('directory_path', '').strip()
 
     try:
-        print(f"--- 🚀 New AI start ---")
-        answer = perform_azure_ai_search(query)
+        print(f"--- 🚀 New AI start !!!!  ---")
+        answer = perform_azure_ai_search(query, directory_path)
         print(f"--- 🚀 New AI end ---")
-        return jsonify({"answer": answer, "status": "Success"}), 200
+        return jsonify({"response": answer, "status": "Success (RAG)"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
 
 @app.route('/version')
 def get_version():

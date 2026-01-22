@@ -5,8 +5,8 @@
 git status
 
 
-$ver = "v27.7.1"
-$comment = "aws - azure debug crash version"
+$ver = "v27.8.2"
+$comment = "aws - Azure supports AI search"
 
 # 2. בקשת אישור מהמשתמש
 Write-Host "-------- $ver - $comment --------" -ForegroundColor Cyan
